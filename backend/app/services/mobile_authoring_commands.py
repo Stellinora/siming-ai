@@ -32,6 +32,8 @@ class Command(BaseModel):
         "character_relationships",
         "chapter_draft_edit",
         "chapter_draft_status",
+        "recycle_restore",
+        "recycle_purge",
     ]
     arguments: dict
     expected: dict
@@ -40,6 +42,11 @@ class Command(BaseModel):
 class Reorder(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     chapter_ids: list[str]
+
+
+class RecycleCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    entry_id: str = Field(min_length=1, max_length=64)
 
 
 class Restore(BaseModel):
@@ -117,6 +124,14 @@ def relationship_guard(db: Session, project_id: str, character_id: str) -> list[
 
 def apply_authoring_command(db: Session, project_id: str, payload: dict) -> None:
     command = Command.model_validate(payload)
+    if command.command in {"recycle_restore", "recycle_purge"}:
+        from app.services.recycle_bin import purge_entry, restore_entry
+        request = RecycleCommand.model_validate(command.arguments)
+        if command.expected:
+            raise ValidationError("回收操作使用回收记录自身的事务冲突校验，expected 必须为空")
+        action = restore_entry if command.command == "recycle_restore" else purge_entry
+        action(db, request.entry_id, project_id=project_id)
+        return
     chapters = SqlAlchemyChapterWorkspace(db)
     if command.command == "chapter_reorder":
         request = Reorder.model_validate(command.arguments)

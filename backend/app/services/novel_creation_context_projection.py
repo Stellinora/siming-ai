@@ -82,6 +82,8 @@ def project_creation_artifact(
         for field in collection_fields
     }
     artifact["collection_access"] = (
+        "If entity tools are not currently open, first call set_tool_categories alone "
+        "to select creation_entities; read entities in the following model step. "
         "Use list_creation_entities with artifact/query/limit, then get_creation_entity "
         "for the exact objects needed by the latest user request."
     )

@@ -156,6 +156,9 @@ class GatewayMutationApplier:
         try:
             with self.db.begin_nested(), defer_session_commits(self.db):
                 self.db.info["siming_sync_projection"] = True
+                from app.services.recycle_bin import DELETED_AT_CONTEXT, ENTRY_ID_CONTEXT
+                self.db.info[ENTRY_ID_CONTEXT] = mutation.mutation_id
+                self.db.info[DELETED_AT_CONTEXT] = mutation.client_modified_at
                 before = self._domain_records(mutation.project_id)
                 if mutation.entity_type == "authoring_command":
                     if mutation.operation != "upsert":
@@ -180,6 +183,8 @@ class GatewayMutationApplier:
             )
         finally:
             self.db.info.pop("siming_sync_projection", None)
+            self.db.info.pop("siming.recycle_entry_id", None)
+            self.db.info.pop("siming.recycle_deleted_at", None)
         return None
 
     def _domain_records(self, project_id: str) -> dict:

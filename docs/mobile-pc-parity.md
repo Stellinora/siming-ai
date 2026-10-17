@@ -4,7 +4,7 @@
 
 PC 定义共享业务契约，Android 在手机执行对应领域操作。保存 Gateway 地址不改变手机 API 与本地资料的执行位置；跨设备同步和作者显式选择的远程模型才使用 Gateway。平台差异及验证范围在各项能力中说明。
 
-当前共登记 **28** 项能力：**13** 项已对齐、**15** 项部分对齐、**0** 项待实现。
+当前共登记 **29** 项能力：**14** 项已对齐、**15** 项部分对齐、**0** 项待实现。
 
 ## 总览
 
@@ -18,6 +18,7 @@ PC 定义共享业务契约，Android 在手机执行对应领域操作。保存
 | `authoring.export` | /api/v1/projects/{project_id}/export | 手机独立领域实现 | 手机独立领域实现 | 手机独立领域实现 | 部分对齐 |
 | `authoring.outline` | /api/v1/projects/{project_id}/outline | 手机独立领域实现 | 手机独立领域实现 | 手机独立领域实现 | 已对齐 |
 | `authoring.project` | /api/v1/projects/{project_id} | 手机独立领域实现 | 手机独立领域实现 | 手机独立领域实现 | 已对齐 |
+| `authoring.recycle_bin` | capture_deletion / restore_entry / purge_entry | 手机独立领域实现 | 手机独立领域实现 | 手机独立领域实现 | 已对齐 |
 | `authoring.worldbuilding` | /api/v1/projects/{project_id}/worldbuilding | 手机独立领域实现 | 手机独立领域实现 | 手机独立领域实现 | 已对齐 |
 | `chapter.cataloging` | /api/v1/projects/{project_id}/cataloging | PC 权威实现 | 明确阻止 | PC 权威实现 | 部分对齐 |
 | `chapter.history` | GET /chapters/{chapter_id}/snapshots[/diff/{snapshot_id}] | 手机独立领域实现 | 手机独立领域实现 | 手机独立领域实现 | 已对齐 |
@@ -135,6 +136,17 @@ PC 定义共享业务契约，Android 在手机执行对应领域操作。保存
 - **Android 在线：** 手机独立领域实现：本机读取或在 Room 事务中写入；无需连接 PC。跨设备同步另行执行，保留冲突保护。
 - **Android 离线：** 手机独立领域实现：本机读取或在 Room 事务中写入；无需连接 PC。跨设备同步另行执行，保留冲突保护。
 - **Android 独立 Agent：** 手机独立领域实现：本机读取或在 Room 事务中写入；无需连接 PC。跨设备同步另行执行，保留冲突保护。
+
+### `authoring.recycle_bin` — 7日回收站、关联资料恢复与立即永久删除
+
+- **权威入口：** `capture_deletion / restore_entry / purge_entry`（`pc_domain_service`）
+- **状态：** 已对齐
+- **副作用：** author_data_restore、recycle_snapshot_delete、content_sync、sync_outbox
+- **幂等策略：** `revisioned_outbox`；必须防重
+- **PC：** PC 权威实现
+- **Android 在线：** 手机独立领域实现：手机独立执行7日保留、关联恢复、冲突校验和永久删除；本机回收快照不要求PC运行。手机资料删除/恢复命令按稳定ID顺序同步，PC拒绝或丢回执时保留恢复快照。本机整部作品移除只影响本机副本。回收站各端列出各自删除记录，PC删除需在PC回收站恢复，快照不随普通作品同步传输。
+- **Android 离线：** 手机独立领域实现：手机独立执行7日保留、关联恢复、冲突校验和永久删除；本机回收快照不要求PC运行。手机资料删除/恢复命令按稳定ID顺序同步，PC拒绝或丢回执时保留恢复快照。本机整部作品移除只影响本机副本。回收站各端列出各自删除记录，PC删除需在PC回收站恢复，快照不随普通作品同步传输。
+- **Android 独立 Agent：** 手机独立领域实现：手机独立执行7日保留、关联恢复、冲突校验和永久删除；本机回收快照不要求PC运行。手机资料删除/恢复命令按稳定ID顺序同步，PC拒绝或丢回执时保留恢复快照。本机整部作品移除只影响本机副本。回收站各端列出各自删除记录，PC删除需在PC回收站恢复，快照不随普通作品同步传输。
 
 ### `authoring.worldbuilding` — 世界观条目创建、读取、更新和删除
 

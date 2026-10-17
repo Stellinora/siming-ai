@@ -85,7 +85,7 @@ call. Long conversations retain a bounded active prompt without deleting the
 author-visible transcript. A checkpoint can help the model navigate earlier
 intent, but it cannot manufacture project state or execute a tool.
 
-Models without a verified context profile use the shared 256K bounded fallback
+Models without a verified context profile use the shared 128K bounded fallback
 with an `unverified` capacity marker and the UTF-8 byte counter. A matching saved
 profile always takes precedence. Other unverified capacity/counter combinations
 still stop before an Agent turn because silent truncation can cause irreversible

@@ -5,6 +5,7 @@ from openai import APIConnectionError, APIError, APITimeoutError, Authentication
 
 from ..core.exceptions import LLMError
 from .base import BaseAdapter
+from .completion_status import require_complete_response
 from .openai_adapter import (
     _extract_tool_calls,
     compact_openai_kwargs,
@@ -12,6 +13,7 @@ from .openai_adapter import (
     message_reasoning_content,
     normalize_openai_tool_call_delta,
 )
+from .request_policy import provider_extra_body, provider_tool_choice
 
 
 class GeminiAdapter(BaseAdapter):
@@ -67,16 +69,23 @@ class GeminiAdapter(BaseAdapter):
             temperature=temperature,
             max_tokens=max_tokens,
         ))
-        if extra_body:
-            kwargs["extra_body"] = extra_body
+        provider_body = provider_extra_body(
+            extra_body, self.base_url or self.DEFAULT_BASE_URL, text_only=not tools,
+        )
+        if provider_body:
+            kwargs["extra_body"] = provider_body
         if tools:
             kwargs["tools"] = tools
+        tool_choice = provider_tool_choice(
+            self.base_url or self.DEFAULT_BASE_URL, "chat_completions", tool_choice,
+        )
         if tool_choice is not None:
             kwargs["tool_choice"] = tool_choice
 
         try:
             response = await client.chat.completions.create(**kwargs)
             choice = response.choices[0]
+            require_complete_response(getattr(choice, "finish_reason", None), max_tokens)
             return {
                 "content": choice.message.content or "",
                 "reasoning_content": message_reasoning_content(choice.message),
@@ -92,6 +101,8 @@ class GeminiAdapter(BaseAdapter):
             raise LLMError(f"Gemini 连接错误: {e}")
         except APIError as e:
             raise LLMError(f"Gemini API 错误: {e}")
+        except LLMError:
+            raise
         except Exception as e:
             raise LLMError(f"Gemini 调用失败: {e}")
 
@@ -113,12 +124,16 @@ class GeminiAdapter(BaseAdapter):
             max_tokens=max_tokens,
             stream=True,
         ))
-        if extra_body:
-            kwargs["extra_body"] = extra_body
+        provider_body = provider_extra_body(
+            extra_body, self.base_url or self.DEFAULT_BASE_URL, text_only=True,
+        )
+        if provider_body:
+            kwargs["extra_body"] = provider_body
 
         try:
             stream = await client.chat.completions.create(**kwargs)
             async for chunk in stream:
+                yield ""
                 finish_reason = getattr(chunk.choices[0], "finish_reason", None)
                 if finish_reason:
                     self.last_stream_finish_reason = str(finish_reason)
@@ -134,6 +149,8 @@ class GeminiAdapter(BaseAdapter):
             raise LLMError(f"Gemini 连接错误: {e}")
         except APIError as e:
             raise LLMError(f"Gemini API 错误: {e}")
+        except LLMError:
+            raise
         except Exception as e:
             raise LLMError(f"Gemini 流式调用失败: {e}")
 
@@ -156,10 +173,16 @@ class GeminiAdapter(BaseAdapter):
             max_tokens=max_tokens,
             stream=True,
         ))
-        if extra_body:
-            kwargs["extra_body"] = extra_body
+        provider_body = provider_extra_body(
+            extra_body, self.base_url or self.DEFAULT_BASE_URL, text_only=not tools,
+        )
+        if provider_body:
+            kwargs["extra_body"] = provider_body
         if tools:
             kwargs["tools"] = tools
+        tool_choice = provider_tool_choice(
+            self.base_url or self.DEFAULT_BASE_URL, "chat_completions", tool_choice,
+        )
         if tool_choice is not None:
             kwargs["tool_choice"] = tool_choice
 
@@ -199,5 +222,7 @@ class GeminiAdapter(BaseAdapter):
             raise LLMError(f"Gemini 连接错误: {e}")
         except APIError as e:
             raise LLMError(f"Gemini API 错误: {e}")
+        except LLMError:
+            raise
         except Exception as e:
             raise LLMError(f"Gemini 流式调用失败: {e}")

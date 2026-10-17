@@ -900,7 +900,8 @@ class SqlAlchemyAssistantWorkspace:
         ]
 
     def delete(self, value: Any) -> None:
-        self.db.delete(value)
+        from app.services.recycle_bin import delete_to_recycle
+        delete_to_recycle(self.db, value)
 
     def runs(self, project_id: str, conversation_id: str | None, *, limit: int):
         query = self.db.query(AssistantRun).filter(AssistantRun.project_id == project_id)

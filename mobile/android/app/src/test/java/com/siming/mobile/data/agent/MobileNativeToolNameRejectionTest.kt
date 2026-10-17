@@ -66,6 +66,8 @@ class MobileNativeToolNameRejectionTest {
         for (rejected in listOf(rejection(count = 3), rejection(capacity = 100))) {
             assertFalse(rejected.recoveryFits)
             assertEquals(MobileConversationContextErrorCode.PROTOCOL_INVALID, rejected.failure.code)
+            assertEquals("模型工具调用或对话协议校验未通过；本批次未执行，此前进度已保留。", rejected.failure.userFacingDetail)
+            assertTrue(rejected.failure.message.contains("此前进度已保留"))
             rejected.results.forEach {
                 assertEquals(JsonPrimitive(false), (it.getValue("data") as JsonObject)["retryable"])
             }

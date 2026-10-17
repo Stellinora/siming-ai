@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from functools import lru_cache
 from typing import Any
 
@@ -12,13 +13,17 @@ import httpx
 
 from app.services.conversation_context.budget import TemplateMeasuredRequestCounter
 from app.services.conversation_context.canonical import canonical_json, canonical_sha256
-from app.services.conversation_context.errors import ConversationContextError, ConversationContextErrorCode
+from app.services.conversation_context.errors import (
+    ConversationContextError,
+    ConversationContextErrorCode,
+)
 
 from .chat_template import local_chat_template_kwargs
 
 
 def make_request_token_counter(
     manager: Any, model_key: str, tools: Sequence[Mapping[str, Any]],
+    *, extra_body: Mapping[str, Any] | None = None,
 ) -> TemplateMeasuredRequestCounter | None:
     """Probe once; after binding, unavailable or changed runtimes fail closed."""
     with manager._lock:
@@ -28,7 +33,12 @@ def make_request_token_counter(
         runtime_identity = (manager._model_key, manager._port, manager._api_key)
         url = f"http://127.0.0.1:{manager._port}"
         headers = {"Authorization": f"Bearer {manager._api_key}"}
-        template_kwargs = local_chat_template_kwargs(model_key, tools_enabled=bool(tools))
+        # Match LocalRuntimeAdapter's setdefault exactly: an explicit override,
+        # including an empty object, replaces the default template options.
+        template_kwargs = deepcopy(dict(extra_body or {}).get(
+            "chat_template_kwargs",
+            local_chat_template_kwargs(model_key, tools_enabled=bool(tools)),
+        ))
 
     def require_same_runtime() -> None:
         if (manager._model_key, manager._port, manager._api_key) != runtime_identity:
@@ -107,7 +117,8 @@ def make_request_token_counter(
     except ConversationContextError:
         return None
     fingerprint = hashlib.sha256(canonical_json([
-        model_key, runtime_identity[1], render(canonical_json(probe), canonical_json(list(tools))),
+        model_key, runtime_identity[1], template_kwargs,
+        render(canonical_json(probe), canonical_json(list(tools))),
         probe_counts,
     ]).encode("utf-8")).hexdigest()[:20]
     return TemplateMeasuredRequestCounter(

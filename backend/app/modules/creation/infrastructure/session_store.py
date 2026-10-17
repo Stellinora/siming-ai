@@ -30,7 +30,8 @@ class SqlAlchemyNovelCreationSessionStore:
         ).limit(limit).all()
 
     def delete(self, session: Any) -> None:
-        self.db.delete(session)
+        from app.services.recycle_bin import delete_to_recycle
+        delete_to_recycle(self.db, session)
 
     def run(self, run_id: str):
         return self.db.query(NovelCreationStageRun).filter(

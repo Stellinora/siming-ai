@@ -31,6 +31,51 @@ def _async_stream(*chunks):
 
 
 class DeepSeekStreamingTest(unittest.TestCase):
+    def test_nonstream_tool_response_preserves_native_reasoning_for_continuation(self):
+        reasoning = "先读取真实资料，再更新立项。"
+        native_call = SimpleNamespace(
+            id="call-original",
+            function=SimpleNamespace(name="get_creation_session", arguments='{"session_id":"s1"}'),
+        )
+        first = SimpleNamespace(
+            choices=[SimpleNamespace(
+                finish_reason="tool_calls",
+                message=SimpleNamespace(content=None, reasoning_content=reasoning, tool_calls=[native_call]),
+            )],
+            model="deepseek-flash", usage=None,
+        )
+        second = SimpleNamespace(
+            choices=[SimpleNamespace(
+                finish_reason="stop",
+                message=SimpleNamespace(content="已读取", reasoning_content="读取完成", tool_calls=None),
+            )],
+            model="deepseek-flash", usage=None,
+        )
+        adapter = DeepSeekAdapter(api_key="sk-test")
+        client = MagicMock()
+        client.chat.completions.create = AsyncMock(side_effect=[first, second])
+        adapter._get_client = MagicMock(return_value=client)
+        messages = [{"role": "user", "content": "读取立项资料"}]
+        tools = [{"type": "function", "function": {
+            "name": "get_creation_session", "parameters": {"type": "object"},
+        }}]
+
+        async def run():
+            result = await adapter.chat_completion(messages=messages, model="deepseek-flash", tools=tools)
+            self.assertEqual(result["reasoning_content"], reasoning)
+            self.assertEqual(result["content"], "")
+            messages.extend([
+                {"role": "assistant", **{key: result[key] for key in ("content", "reasoning_content", "tool_calls")}},
+                {"role": "tool", "tool_call_id": "call-original", "content": '{"revision":1}'},
+            ])
+            return await adapter.chat_completion(messages=messages, model="deepseek-flash", tools=tools)
+
+        result = asyncio.run(run())
+        self.assertEqual(result["content"], "已读取")
+        continued = client.chat.completions.create.await_args.kwargs["messages"][1]
+        self.assertEqual(continued["reasoning_content"], reasoning)
+        self.assertEqual(continued["tool_calls"][0]["id"], "call-original")
+
     def test_discovered_models_reach_text_and_native_tool_streams_unchanged(self):
         for model in ("deepseek-flash", "deepseek-future-test-model"):
             for native_tools in (False, True):
@@ -70,7 +115,9 @@ class DeepSeekStreamingTest(unittest.TestCase):
                 model="deepseek-v4-flash",
             )]
 
-        self.assertEqual(asyncio.run(collect()), ["final answer"])
+        chunks = asyncio.run(collect())
+        self.assertEqual("".join(chunks), "final answer")
+        self.assertIn("", chunks)  # Transport activity must reset the gateway idle timer.
         create = adapter._get_client.return_value.chat.completions.create
         self.assertEqual(
             create.await_args.kwargs["extra_body"],
@@ -90,7 +137,9 @@ class DeepSeekStreamingTest(unittest.TestCase):
                 extra_body={"thinking": {"type": "enabled"}},
             )]
 
-        self.assertEqual(asyncio.run(collect()), ["final answer"])
+        chunks = asyncio.run(collect())
+        self.assertEqual("".join(chunks), "final answer")
+        self.assertIn("", chunks)  # Transport activity must reset the gateway idle timer.
         create = adapter._get_client.return_value.chat.completions.create
         self.assertEqual(
             create.await_args.kwargs["extra_body"],

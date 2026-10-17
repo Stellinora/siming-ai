@@ -129,5 +129,5 @@ def test_scheduled_request_uses_explicit_profile_before_unknown_model_fallback()
         assert budget.output_reserve_tokens == 2048
         assert budget.tool_transaction_budget_tokens == budget.request_input_limit - budget.current_input_tokens
         _, fallback = _scheduled_request_budget(db, messages, schemas, "openai:unlisted-capacity-test")
-        assert fallback.context_window_tokens == 256_000
+        assert fallback.context_window_tokens == 128_000
     engine.dispose()

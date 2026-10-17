@@ -74,17 +74,9 @@ class SqlAlchemyCharacterWorkspace:
         self.db.add(version)
         return version
 
-    def delete_relationships(self, project_id: str, character_id: str) -> None:
-        self.db.query(CharacterRelationship).filter(
-            CharacterRelationship.project_id == project_id,
-            or_(
-                CharacterRelationship.character_a_id == character_id,
-                CharacterRelationship.character_b_id == character_id,
-            ),
-        ).delete(synchronize_session=False)
-
     def delete(self, value: Any) -> None:
-        self.db.delete(value)
+        from app.services.recycle_bin import delete_to_recycle
+        delete_to_recycle(self.db, value)
 
     def versions(self, character_id: str):
         return self.db.query(CharacterVersion).filter(
@@ -127,20 +119,43 @@ class SqlAlchemyCharacterWorkspace:
             endpoint_ids.update(pair)
         if not self.targets_exist(project_id, endpoint_ids):
             raise ValidationError("关系两端角色必须属于当前作品")
-        self.delete_relationships(project_id, character_id)
-        self.db.flush()
+        existing = self.db.query(CharacterRelationship).filter(
+            CharacterRelationship.project_id == project_id,
+            or_(CharacterRelationship.character_a_id == character_id,
+                CharacterRelationship.character_b_id == character_id),
+        ).all()
+        by_id = {row.id: row for row in existing}
+        by_pair = {(row.character_a_id, row.character_b_id): row for row in existing}
+        retained = set()
+        updates = []
         for item in relationships:
             source_id = item.source_character_id or character_id
-            self.db.add(
-                CharacterRelationship(
+            requested_id = getattr(item, "id", None)
+            row = by_id.get(requested_id) if requested_id else by_pair.get((source_id, item.target_character_id))
+            if requested_id and row is None and self.db.get(CharacterRelationship, requested_id) is not None:
+                raise ValidationError("不能覆盖其他角色或作品的关系")
+            if row is not None:
+                if row.id in retained:
+                    raise ValidationError("关系 ID 不能重复")
+                retained.add(row.id)
+            updates.append((item, source_id, row))
+        removed = [row for row in existing if row.id not in retained]
+        if removed:
+            from app.services.recycle_bin import capture_deletion
+            with capture_deletion(self.db, removed[0]):
+                for row in removed:
+                    self.db.delete(row)
+        for item, source_id, row in updates:
+            if row is None:
+                row = CharacterRelationship(
                     **({"id": item.id} if getattr(item, "id", None) else {}),
                     project_id=project_id,
-                    character_a_id=source_id,
-                    character_b_id=item.target_character_id,
-                    relationship_type=item.relationship_type,
-                    description=item.description,
                 )
-            )
+                self.db.add(row)
+            row.character_a_id = source_id
+            row.character_b_id = item.target_character_id
+            row.relationship_type = item.relationship_type
+            row.description = item.description
 
     def ensure_ai_config(self, character: Any):
         config = character.ai_config

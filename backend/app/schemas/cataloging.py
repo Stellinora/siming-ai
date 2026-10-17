@@ -37,7 +37,7 @@ class CatalogingModeUpdate(BaseModel):
 
 class CatalogingCandidateUpdate(BaseModel):
     payload: Optional[dict[str, Any]] = None
-    status: Optional[CandidateStatus] = None
+    status: Optional[ManualCandidateStatus] = None
 
 
 class CatalogingCandidateCreate(BaseModel):
@@ -52,7 +52,7 @@ class CatalogingCandidateCreate(BaseModel):
 
 class CatalogingCandidateBulkUpdate(BaseModel):
     candidate_ids: list[str] = Field(default_factory=list)
-    status: CandidateStatus
+    status: ManualCandidateStatus
 
 
 class CatalogingJobResponse(BaseModel):

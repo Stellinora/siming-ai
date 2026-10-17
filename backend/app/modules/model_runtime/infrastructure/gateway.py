@@ -8,7 +8,6 @@ import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
-from inspect import isawaitable
 from typing import TypeVar
 
 from app.ai.anthropic_adapter import AnthropicAdapter
@@ -17,15 +16,23 @@ from app.ai.capabilities import (
     normalize_retry_count,
     provider_capabilities,
     request_meta,
+    require_native_tool_capability,
     sanitize_tool_request,
     should_retry_without_tool_choice,
 )
+from app.ai.completion_status import require_complete_response
 from app.ai.deepseek_adapter import DeepSeekAdapter
 from app.ai.gemini_adapter import GeminiAdapter
 from app.ai.local_runtime_adapter import LocalRuntimeAdapter
 from app.ai.openai_adapter import OpenAIAdapter
 from app.ai.qwen_adapter import QwenAdapter
-from app.core.exceptions import LLMError, LLMOutputLimitError, NotFoundError
+from app.ai.request_policy import non_thinking_defaults
+from app.core.exceptions import (
+    LLMError,
+    LLMIncompleteResponseError,
+    LLMOutputLimitError,
+    NotFoundError,
+)
 from app.core.provider_errors import provider_http_status, provider_protocol_rejected
 from app.modules.context.interfaces.runtime import active_context_manifest
 from app.modules.model_runtime.application.runtime import get_model_runtime
@@ -44,6 +51,10 @@ from app.modules.model_runtime.infrastructure.stream_resume import (
     _normalize_stream_resumes as _normalize_stream_resumes,
 )
 from app.modules.model_runtime.infrastructure.stream_resume import (
+    _notify_stream_resume,
+    _ResumeProtocolRejected,
+)
+from app.modules.model_runtime.infrastructure.stream_resume import (
     _resume_messages as _resume_messages,
 )
 from app.modules.model_runtime.infrastructure.stream_resume import (
@@ -60,6 +71,11 @@ from .local_cli import (
     LocalCLIAdapter,
     detect_cli_quota_error,
     is_local_cli_provider,
+)
+from .request_continuation import (
+    attach_request_continuation,
+    prepare_request_continuation,
+    recovery_continuation,
 )
 
 ADAPTER_MAP: dict[str, type[BaseAdapter]] = {
@@ -94,8 +110,13 @@ class _ToolStreamAttempt:
     raw_produced: bool = False
     content_seen: bool = False
     reasoning: list[str] = field(default_factory=list)
+    content_events: list[dict] = field(default_factory=list)
     tool_events: list[dict] = field(default_factory=list)
     done_event: dict | None = None
+
+
+class _ToolResponseProtocolError(LLMError):
+    """A completed response has invalid tools, not an interrupted transport."""
 
 
 def _tool_choice_correction_note(provider: str, model: str) -> str:
@@ -151,69 +172,12 @@ def _validate_tool_stream_completion(
     finish_reason = str(done_event.get("finish_reason") or "").lower()
     if finish_reason in {"length", "max_tokens", "token_limit", "incomplete"}:
         raise _ResumeHandshakeError("模型输出达到单次长度上限，正在从检查点继续")
+    require_complete_response(finish_reason)
     if not _tool_delta_events_complete(buffered_tool_events):
-        raise _ResumeHandshakeError("工具调用在参数完整前结束")
+        raise _ToolResponseProtocolError("模型返回的工具参数格式无效，未执行任何工具")
     if handshake and not content_seen and not buffered_tool_events:
         handshake.require_verified()
     return has_usage
-
-
-def _record_stream_resume(
-    *,
-    provider: str,
-    resume_attempt: int,
-    checkpoint_chars: int,
-    tool_mode: bool,
-) -> None:
-    try:
-        from app.modules.operations.interfaces.runtime import current_operation_id
-        from app.services.operation_runtime import record_operation_signal
-
-        operation_id = current_operation_id()
-        if operation_id:
-            record_operation_signal(
-                operation_id,
-                "stream_resume",
-                {
-                    "resume_attempt": resume_attempt,
-                    "checkpoint_chars": checkpoint_chars,
-                    "tool_mode": tool_mode,
-                    "provider": provider,
-                },
-                message=(
-                    "模型连接中断，正在从已验证检查点继续"
-                    if checkpoint_chars else "模型工具响应中断，正在重新获取完整工具调用"
-                ),
-            )
-    except Exception:
-        # Progress projection must never change model execution semantics.
-        pass
-
-
-async def _notify_stream_resume(
-    callback: Callable[[dict], Awaitable[None] | None] | None,
-    *,
-    provider: str,
-    resume_attempt: int,
-    checkpoint_chars: int,
-    tool_mode: bool,
-) -> None:
-    payload = {
-        "resume_attempt": resume_attempt,
-        "checkpoint_chars": checkpoint_chars,
-        "tool_mode": tool_mode,
-        "provider": provider,
-    }
-    _record_stream_resume(**payload)
-    if callback is None:
-        return
-    try:
-        result = callback(dict(payload))
-        if isawaitable(result):
-            await result
-    except Exception:
-        # UI/progress projection is advisory; checkpoint recovery is not.
-        pass
 
 
 def _is_auth_error(error: BaseException) -> bool:
@@ -222,7 +186,10 @@ def _is_auth_error(error: BaseException) -> bool:
 
 
 def _is_non_retryable(error: BaseException) -> bool:
-    if isinstance(error, CLIPermissionRequiredError):
+    if isinstance(error, LLMIncompleteResponseError):
+        return True
+    if isinstance(error, (CLIPermissionRequiredError, _ResumeProtocolRejected,
+                          _ToolResponseProtocolError)):
         return True
     text = str(error)
     if "InvalidToken" in text or "登录凭据无效" in text:
@@ -494,7 +461,7 @@ class LLMGateway:
         provider, model_name = cls._parse_model(model)
         if local_runtime_disabled(provider):
             raise LLMError(local_runtime_disabled_message())
-        safe_tools, safe_tool_choice, notes = sanitize_tool_request(provider, tools, tool_choice)
+        require_native_tool_capability(provider, tools)
         config = cls._load_config(provider)
         adapter_cls = cls._get_adapter(provider)
         adapter = adapter_cls(
@@ -504,6 +471,11 @@ class LLMGateway:
             cli_args=getattr(config, "cli_args", None),
             api_protocol=getattr(config, "api_protocol", None) or "chat_completions",
         )
+        safe_tools, safe_tool_choice, notes = sanitize_tool_request(
+            provider, tools, tool_choice,
+            base_url=adapter.base_url or getattr(adapter, "DEFAULT_BASE_URL", None),
+            api_protocol="responses" if adapter.api_protocol == "responses" else "chat_completions",
+        )
         timeout_seconds = cls._timeout_value(timeout)
         call_extra_body, wait_timeout_seconds = cls._local_cli_timeout_body(
             adapter_cls,
@@ -512,8 +484,12 @@ class LLMGateway:
         )
         attempts = normalize_retry_count(retry)
 
+        messages, call_extra_body, continuation = prepare_request_continuation(
+            messages, call_extra_body, adapter, provider, model_name,
+        )
+
         async def _send() -> dict:
-            return await adapter.chat_completion(
+            result = await adapter.chat_completion(
                 messages=messages,
                 model=model_name,
                 temperature=temperature,
@@ -522,6 +498,7 @@ class LLMGateway:
                 tools=safe_tools,
                 tool_choice=safe_tool_choice,
             )
+            return attach_request_continuation(result, continuation)
 
         async def _call() -> dict:
             nonlocal safe_tool_choice
@@ -591,6 +568,9 @@ class LLMGateway:
         resume_attempt = 0
         last_error: BaseException | None = None
         committed_parts: list[str] = []
+        messages, call_extra_body, _continuation = prepare_request_continuation(
+            messages, call_extra_body, adapter, provider, model_name,
+        )
         request_messages = messages
         handshake: _ResumeHandshake | None = None
 
@@ -658,7 +638,6 @@ class LLMGateway:
                 request_messages, handshake = _resume_messages(
                     messages,
                     committed_text,
-                    tool_mode=False,
                 )
                 await _notify_stream_resume(
                     on_resume,
@@ -697,11 +676,7 @@ class LLMGateway:
         provider, model_name = cls._parse_model(model)
         if local_runtime_disabled(provider):
             raise LLMError(local_runtime_disabled_message())
-        safe_tools, safe_tool_choice, notes = sanitize_tool_request(
-            provider,
-            tools,
-            tool_choice,
-        )
+        require_native_tool_capability(provider, tools)
         config = cls._load_config(provider)
         adapter_cls = cls._get_adapter(provider)
         adapter = adapter_cls(
@@ -711,6 +686,11 @@ class LLMGateway:
             cli_args=getattr(config, "cli_args", None),
             api_protocol=getattr(config, "api_protocol", None) or "chat_completions",
         )
+        safe_tools, safe_tool_choice, notes = sanitize_tool_request(
+            provider, tools, tool_choice,
+            base_url=adapter.base_url or getattr(adapter, "DEFAULT_BASE_URL", None),
+            api_protocol="responses" if adapter.api_protocol == "responses" else "chat_completions",
+        )
         timeout_seconds = cls._timeout_value(timeout)
         call_extra_body, wait_timeout_seconds = cls._local_cli_timeout_body(
             adapter_cls,
@@ -718,17 +698,20 @@ class LLMGateway:
             timeout_seconds,
         )
         attempts = normalize_retry_count(retry)
+        messages, call_extra_body, continuation = prepare_request_continuation(
+            messages, call_extra_body, adapter, provider, model_name,
+        )
         return (
             messages, model_name, provider, adapter, max_tokens, timeout_seconds,
             call_extra_body, wait_timeout_seconds, attempts,
-            _normalize_stream_resumes(resume), safe_tools, safe_tool_choice, notes,
+            _normalize_stream_resumes(resume), safe_tools, safe_tool_choice, notes, continuation,
         )
 
     @classmethod
     async def _tool_stream_events(
         cls, gen: AsyncGenerator[dict, None], wait_timeout_seconds: float | None,
         handshake: _ResumeHandshake | None, committed_parts: list[str],
-        attempt: _ToolStreamAttempt,
+        attempt: _ToolStreamAttempt, atomic_response: bool,
     ) -> AsyncGenerator[dict, None]:
         while True:
             try:
@@ -740,6 +723,11 @@ class LLMGateway:
             if event_type == "content_delta":
                 delta = str(chunk.get("delta") or "")
                 attempt.content_seen = attempt.content_seen or bool(delta)
+                if atomic_response:
+                    # No prose or tool call from this response is accepted
+                    # until its terminal frame and full arguments validate.
+                    attempt.content_events.append(dict(chunk))
+                    continue
                 outgoing = handshake.consume(delta) if handshake else delta
                 if outgoing:
                     committed_parts.append(outgoing)
@@ -778,7 +766,7 @@ class LLMGateway:
     ) -> AsyncGenerator[dict, None]:
         (messages, model_name, provider, adapter, max_tokens, timeout_seconds,
          call_extra_body, wait_timeout_seconds, attempts, resumes_remaining,
-         safe_tools, safe_tool_choice, notes) = cls._prepare_tool_stream(
+         safe_tools, safe_tool_choice, notes, continuation) = cls._prepare_tool_stream(
             messages, model, max_tokens, timeout, retry, resume, extra_body, tools, tool_choice,
         )
         raw_retries_remaining = attempts - 1
@@ -808,14 +796,14 @@ class LLMGateway:
                     tool_choice=safe_tool_choice,
                 )
                 async for chunk in cls._tool_stream_events(
-                    gen, wait_timeout_seconds, handshake, committed_parts, attempt,
+                    gen, wait_timeout_seconds, handshake, committed_parts,
+                    attempt, bool(safe_tools),
                 ):
                     yield chunk
 
                 for event in _complete_tool_stream(
-                    attempt.done_event, attempt.tool_events, handshake, attempt.content_seen,
-                    usage_totals, has_usage, attempt.reasoning, resume_attempt,
-                    notes, provider, model_name,
+                    attempt, handshake, usage_totals, has_usage, resume_attempt,
+                    notes, provider, model_name, continuation, bool(safe_tools),
                 ):
                     yield event
                 return
@@ -843,32 +831,32 @@ class LLMGateway:
                     with suppress(Exception):
                         await gen.aclose()
 
-            output_limit_without_checkpoint = (
-                provider == "deepseek"
-                and attempt.done_event is not None
+            output_limit = (
+                attempt.done_event is not None
                 and str(attempt.done_event.get("finish_reason") or "").lower()
                 in {"length", "max_tokens", "token_limit", "incomplete"}
-                and not committed_parts
-                and not attempt.content_seen
             )
-            if output_limit_without_checkpoint:
-                if (
-                    not thinking_fallback_used
-                    and attempt.reasoning
-                    and "thinking" not in (call_extra_body or {})
-                ):
-                    # The default DeepSeek thinking mode can use the entire
-                    # orchestration budget before emitting a usable tool call.
-                    # No text or tool transaction was committed, so one fresh
-                    # non-thinking request is safe and avoids identical retries.
+            if output_limit:
+                recovery_body = _thinking_recovery_body(
+                    adapter, call_extra_body, committed_parts, attempt, thinking_fallback_used,
+                )
+                if recovery_body:
+                    # No text or tool transaction was committed. Keep the
+                    # recovered wire mode with the accepted transaction so
+                    # later steps can replay it without missing reasoning.
                     call_extra_body = {
-                        **(call_extra_body or {}), "thinking": {"type": "disabled"},
+                        **(call_extra_body or {}), **recovery_body,
                     }
+                    continuation = recovery_continuation(
+                        adapter, provider, model_name, recovery_body,
+                    )
                     thinking_fallback_used = True
                     request_messages = messages
                     handshake = None
                     notes.append("思考耗尽工具响应额度，已重取无思考工具调用")
                     continue
+                # A native tool transaction must fit in one response. Repeating
+                # a truncated call at the same limit cannot resume its JSON.
                 raise LLMOutputLimitError(max_tokens)
 
             if non_retryable:
@@ -893,17 +881,15 @@ class LLMGateway:
             if can_resume:
                 resumes_remaining -= 1
                 resume_attempt += 1
-                request_messages, handshake = _resume_messages(
-                    messages,
-                    committed_text,
-                    tool_mode=True,
+                request_messages, handshake = (
+                    (messages, None) if safe_tools else _resume_messages(messages, committed_text)
                 )
                 await _notify_stream_resume(
                     on_resume,
                     provider=provider,
                     resume_attempt=resume_attempt,
                     checkpoint_chars=len(committed_text),
-                    tool_mode=True,
+                    tool_mode=bool(safe_tools),
                 )
                 await asyncio.sleep(min(8, resume_attempt * 1.5))
                 continue
@@ -915,30 +901,45 @@ class LLMGateway:
 
 
 def _complete_tool_stream(
-    done_event: dict | None, buffered_tool_events: list[dict],
-    handshake: _ResumeHandshake | None, content_seen: bool,
-    usage_totals: dict[str, int], has_usage: bool, attempt_reasoning: list[str],
+    attempt: _ToolStreamAttempt, handshake: _ResumeHandshake | None,
+    usage_totals: dict[str, int], has_usage: bool,
     resume_attempt: int, notes: list[str], provider: str, model_name: str,
+    continuation: dict | None, atomic_response: bool,
 ):
     has_usage = _validate_tool_stream_completion(
-        done_event,
-        buffered_tool_events,
+        attempt.done_event,
+        attempt.tool_events,
         handshake,
-        content_seen,
+        attempt.content_seen,
         usage_totals,
         has_usage,
     )
 
-    yield from buffered_tool_events
+    yield from attempt.content_events
+    yield from attempt.tool_events
+    done_event = attempt.done_event
     if done_event is not None:
         # Deltas from interrupted attempts may already have been
         # shown as progress. Only the completed attempt's native
         # reasoning belongs to the accepted tool transaction.
         if not isinstance(done_event.get("reasoning_content"), str):
-            done_event["reasoning_content"] = "".join(attempt_reasoning)
+            done_event["reasoning_content"] = "".join(attempt.reasoning)
         if has_usage:
             done_event["usage"] = dict(usage_totals)
         if resume_attempt:
-            notes.append(f"流式响应已从检查点续传 {resume_attempt} 次")
+            notes.append(
+                f"中断的工具响应已整批重新获取 {resume_attempt} 次" if atomic_response
+                else f"流式响应已从检查点续传 {resume_attempt} 次"
+            )
         done_event.setdefault("request_meta", request_meta(provider, model_name, notes))
-        yield done_event
+        yield attach_request_continuation(done_event, continuation)
+
+
+def _thinking_recovery_body(adapter, extra_body, committed_parts, attempt, already_used):
+    if committed_parts or attempt.content_seen or already_used or not attempt.reasoning:
+        return None
+    return non_thinking_defaults(
+        adapter.base_url,
+        "responses" if adapter.api_protocol == "responses" else "chat_completions",
+        "tool_recovery", extra_body,
+    )

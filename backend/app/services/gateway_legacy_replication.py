@@ -796,7 +796,8 @@ def apply_domain_mutation(
         if spec.model is Chapter:
             SqlAlchemyChapterWorkspace(db).delete(project_id, entity_id)
             return
-        db.delete(row)
+        from app.services.recycle_bin import delete_to_recycle
+        delete_to_recycle(db, row)
         db.flush()
         return
 

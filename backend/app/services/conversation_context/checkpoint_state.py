@@ -18,6 +18,12 @@ from .runtime_types import CONVERSATION_CONTEXT_POLICY_VERSION, ConversationCont
 from .store_phases import commit_context_phase, refresh_context_phase
 
 _PUBLIC_ERROR_DETAIL = {
+    ConversationContextErrorCode.PROTOCOL_INVALID.value: (
+        "模型返回的工具调用未通过协议校验，本批次未执行；此前进度已保留。请重试本轮。"
+    ),
+    ConversationContextErrorCode.TOOL_CAPABILITY_UNAVAILABLE.value: (
+        "模型选择了当前不可用的工具，本批次未执行；此前进度已保留。请重试本轮。"
+    ),
     ConversationContextErrorCode.TOOL_TRANSACTION_OVER_CAPACITY.value: (
         "本批工具消息与结果超过当前模型剩余容量，已停止重试；此前进度已保留，本批次未执行。"
         "请缩小查询范围或分步读取；容量档案应填写模型实际支持的数值。"

@@ -5185,6 +5185,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/recycle-bin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Recycle Bin */
+        get: operations["list_recycle_bin_api_v1_recycle_bin_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/recycle-bin/{entry_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Permanently Delete Recycled Data */
+        delete: operations["permanently_delete_recycled_data_api_v1_recycle_bin__entry_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/recycle-bin/{entry_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore Recycled Data */
+        post: operations["restore_recycled_data_api_v1_recycle_bin__entry_id__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runtime/capabilities": {
         parameters: {
             query?: never;
@@ -6199,7 +6250,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "pending" | "edited" | "approved" | "rejected" | "applying" | "applied" | "apply_failed";
+            status: "pending" | "edited" | "approved" | "rejected";
         };
         /** CatalogingCandidateCreate */
         CatalogingCandidateCreate: {
@@ -6231,7 +6282,7 @@ export interface components {
                 [key: string]: unknown;
             } | null;
             /** Status */
-            status?: ("pending" | "edited" | "approved" | "rejected" | "applying" | "applied" | "apply_failed") | null;
+            status?: ("pending" | "edited" | "approved" | "rejected") | null;
         };
         /** CatalogingModeUpdate */
         CatalogingModeUpdate: {
@@ -20678,6 +20729,102 @@ export interface operations {
             header?: never;
             path: {
                 project_id: string;
+                entry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_recycle_bin_api_v1_recycle_bin_get: {
+        parameters: {
+            query?: {
+                project_id?: string | null;
+                entity_type?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    permanently_delete_recycled_data_api_v1_recycle_bin__entry_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_recycled_data_api_v1_recycle_bin__entry_id__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
                 entry_id: string;
             };
             cookie?: never;

@@ -91,12 +91,13 @@ class ProjectPackageChapterStateMigrationInstrumentedTest {
             "VALUES ('edit', 'p1', 'chapter', 'edited', 'upsert', 7, '{}', 'saved-time', 'pending', NULL, NULL, 123)")
         old.close()
         val upgraded = Room.databaseBuilder(context, SimingDatabase::class.java, name)
-            .addMigrations(SimingDatabase.MIGRATION_3_4, SimingDatabase.MIGRATION_4_5, SimingDatabase.MIGRATION_5_6).build()
+            .addMigrations(SimingDatabase.MIGRATION_3_4, SimingDatabase.MIGRATION_4_5, SimingDatabase.MIGRATION_5_6, SimingDatabase.MIGRATION_6_7).build()
         try {
             val snapshot = upgraded.dao().projectSnapshot("p1")
             fun record(id: String) = snapshot.single { it.entityId == id }
             fun payload(id: String) = Json.parseToJsonElement(record(id).payloadJson!!).jsonObject
-            assertEquals(6, upgraded.openHelper.readableDatabase.version)
+            assertEquals(7, upgraded.openHelper.readableDatabase.version)
+            assertTrue(upgraded.dao().recycleEntries().isEmpty())
             assertTrue(upgraded.dao().excludedProjectIds().isEmpty())
             assertEquals("device", payload("mobile-draft").getValue("draft").jsonObject.getValue("execution_host").jsonPrimitive.content)
             assertEquals("保留的创意", payload("mobile-draft").getValue("draft").jsonObject.getValue("ideas").jsonPrimitive.content)

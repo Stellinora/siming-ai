@@ -621,7 +621,7 @@ function NovelCreationWizardPage() {
       setSearchParams({}, { replace: true })
     }
     await loadSessions()
-    message.success('未完成草稿已删除')
+    message.success('未完成草稿已移至回收站，7 天内可恢复')
   }
 
   const openRefine = (stage: string) => {

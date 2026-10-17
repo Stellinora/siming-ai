@@ -86,11 +86,13 @@ class LocalRuntimeManager:
         self,
         model_key: str,
         tools: Sequence[Mapping[str, Any]],
+        *,
+        extra_body: Mapping[str, Any] | None = None,
     ):
         """Bind the loaded model's tokenizer and native request template."""
         from .token_counter import make_request_token_counter
 
-        return make_request_token_counter(self, model_key, tools)
+        return make_request_token_counter(self, model_key, tools, extra_body=extra_body)
 
     def status(self) -> dict:
         running = bool(self._port and self._healthy())

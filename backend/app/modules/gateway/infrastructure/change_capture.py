@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 _PENDING_CAPTURE = "siming_pending_gateway_capture"
 _CAPTURE_JOB_IDS = "siming_gateway_capture_job_ids"
 _SKIP_CAPTURE = "siming_sync_projection"
+_RECOVERED_ROWS = "siming_recovered_author_rows"
 _events_configured = False
 
 
@@ -42,6 +43,30 @@ def _remember_job(session: Session, job_id: str) -> None:
     job_ids = session.info.setdefault(_CAPTURE_JOB_IDS, [])
     if job_id not in job_ids:
         job_ids.append(job_id)
+
+
+def _capture_restored_rows(session: Session, project_id: str, changes: list[dict]) -> None:
+    """Publish Core-based recovery through the same transactional sync outbox."""
+    if not get_settings().gateway_enabled or session.info.get(_SKIP_CAPTURE):
+        return
+    config = session.get(SyncProject, project_id)
+    if config is None or config.status != "enabled":
+        return
+    from app.services.gateway_legacy_replication import RECORD_SPECS
+    by_table = {spec.model.__tablename__: spec for spec in RECORD_SPECS}
+    for item in changes:
+        spec = by_table.get(item["table"])
+        if spec is None:
+            continue
+        row = session.get(spec.model, tuple(item["key"]))
+        operation = "upsert" if row is not None else "delete"
+        job = SyncCaptureJob(
+            id=generate_uuid(), project_id=project_id, entity_type=spec.entity_type,
+            entity_id=str(item["key"][0]), operation=operation,
+            payload_json=serialize_record(row, spec) if row is not None else None,
+        )
+        session.add(job)
+        _remember_job(session, job.id)
 
 
 def _parent_from_session(session: Session, model: type, parent_id: str | None):
@@ -74,6 +99,9 @@ def _project_id(session: Session, row, spec: RecordSpec) -> str | None:
 
 
 def _capture_before_flush(session: Session, _flush_context, _instances) -> None:
+    recovered = session.info.pop(_RECOVERED_ROWS, None)
+    if recovered:
+        _capture_restored_rows(session, recovered["project_id"], recovered["changes"])
     if not get_settings().gateway_enabled or session.info.get(_SKIP_CAPTURE):
         return
 
@@ -216,6 +244,8 @@ class SyncCaptureProcessor:
 
 
 def _dispatch_after_commit(session: Session) -> None:
+    if session.in_nested_transaction():
+        return
     job_ids = list(session.info.pop(_CAPTURE_JOB_IDS, []))
     if not job_ids:
         return
@@ -229,6 +259,7 @@ def _dispatch_after_commit(session: Session) -> None:
 
 
 def _clear_after_rollback(session: Session) -> None:
+    session.info.pop(_RECOVERED_ROWS, None)
     session.info.pop(_PENDING_CAPTURE, None)
     session.info.pop(_CAPTURE_JOB_IDS, None)
 

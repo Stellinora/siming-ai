@@ -30,6 +30,7 @@ if (-not $env:ANDROID_SDK_ROOT -or -not (Test-Path -LiteralPath $env:ANDROID_SDK
 }
 
 $gradle = $GradleCommand
+& (Join-Path $scriptDir "check-release-preflight.ps1")
 if (-not $gradle) { $gradle = $env:SIMING_GRADLE_COMMAND }
 if (-not $gradle) { $gradle = Join-Path $androidRoot "gradlew.bat" }
 

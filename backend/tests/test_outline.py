@@ -781,7 +781,7 @@ class TestWorkspaceOutlineLinks(OutlineTestCase):
                 update_outline_node(
                     db,
                     project_id,
-                    {"id": node_id, "character_names": []},
+                    {"id": node_id, "character_ids": []},
                 )
             )
             self.assertEqual(cleared["data"]["linked_characters"], [])
@@ -790,7 +790,7 @@ class TestWorkspaceOutlineLinks(OutlineTestCase):
                 update_outline_node(
                     db,
                     project_id,
-                    {"id": node_id, "character_names": [second["name"]]},
+                    {"id": node_id, "character_ids": [second["id"]]},
                 )
             )
             self.assertEqual(
@@ -847,7 +847,7 @@ class TestWorkspaceOutlineLinks(OutlineTestCase):
                 0,
             )
 
-            with self.assertRaisesRegex(ValidationError, "Unknown role"):
+            with self.assertRaisesRegex(ValidationError, "关联角色必须属于当前作品"):
                 asyncio.run(
                     update_outline_node(
                         db,
@@ -855,7 +855,7 @@ class TestWorkspaceOutlineLinks(OutlineTestCase):
                         {
                             "id": existing["id"],
                             "summary": "Must not be applied",
-                            "character_names": [character["name"], "Unknown role"],
+                            "character_ids": [character["id"], "missing-character"],
                         },
                     )
                 )

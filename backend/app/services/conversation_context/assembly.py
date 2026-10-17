@@ -65,8 +65,9 @@ def resolve_generation_model_binding(
     protocol: str,
     system_prompt: str,
     current_tools: Sequence[Mapping[str, Any]],
+    extra_body: Mapping[str, Any] | None = None,
 ) -> tuple[GenerationModelBinding, TokenCounter, int]:
-    """Adapt the model profile, using the bounded 256K fallback when it is unknown."""
+    """Adapt the model profile, using the bounded 128K fallback when it is unknown."""
 
     profile = orchestrator.resolve_model_profile(model, task_type)
     if profile.known:
@@ -80,7 +81,7 @@ def resolve_generation_model_binding(
                 from app.services.local_runtime import get_runtime_manager
 
                 measured = get_runtime_manager().request_token_counter(
-                    profile.model_name, current_tools
+                    profile.model_name, current_tools, extra_body=extra_body
                 )
             except Exception:
                 measured = None
@@ -107,6 +108,9 @@ def resolve_generation_model_binding(
                 "known": profile.known,
                 "task_type": task_type,
                 "protocol": protocol,
+                **({"chat_template_kwargs": extra_body["chat_template_kwargs"]}
+                   if profile.provider == "local_llama_cpp" and extra_body is not None
+                   and "chat_template_kwargs" in extra_body else {}),
             }
         ),
     )

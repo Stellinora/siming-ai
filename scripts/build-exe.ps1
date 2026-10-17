@@ -353,6 +353,7 @@ Invoke-Native $VenvPython @("-m", "pip", "install", "--disable-pip-version-check
 Invoke-Native $VenvPython @("-m", "pip", "install", "--disable-pip-version-check", "--only-binary=:all:", "--no-binary=proxy_tools", "--no-build-isolation", "--no-deps", "-i", $PipIndexUrl, "-r", $PythonBuildLock)
 Invoke-Native $VenvPython @((Join-Path $ScriptDir "verify-python-build-lock.py"), "--lock", $PythonBuildLock, "--pyinstaller-version", [string]$Toolchain.pyinstaller)
 Invoke-Native $VenvPython @("-m", "pip", "check")
+& (Join-Path $ScriptDir "check-release-preflight.ps1") -PythonCommand $VenvPython
 $BackendPathForPython = $BackendDir.Replace("\", "\\")
 $Version = (& $VenvPython -c "import sys; sys.path.insert(0, '$BackendPathForPython'); from app.version import APP_VERSION; print(APP_VERSION)").Trim()
 $VersionInfoPath = Join-Path $BuildDir "$AppName-version-info.txt"

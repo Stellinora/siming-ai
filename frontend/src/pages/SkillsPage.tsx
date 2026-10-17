@@ -290,7 +290,7 @@ function SkillsPage({ projectId }: SkillsPageProps) {
   const handleDelete = async (skillId: string) => {
     try {
       await apiClient.delete(`/projects/${projectId}/skills/${skillId}`)
-      message.success('技能已删除')
+      message.success('技能已移至回收站，7 天内可恢复')
       fetchSkills()
     } catch (err: any) {
       message.error(err.message || '删除技能失败')
@@ -507,6 +507,7 @@ function SkillsPage({ projectId }: SkillsPageProps) {
           ) : (
             <Popconfirm
               title="确定删除此技能？"
+              description="技能将移至回收站，7 天内可恢复。"
               onConfirm={() => handleDelete(record.id)}
               okText="删除"
               cancelText="取消"

@@ -21,6 +21,18 @@ def safe_creation_agent_error(exc: Exception) -> tuple[str, dict[str, Any]]:
                 "next_action": failure.details["remediation"],
             }
         code = exc.code.value
+        if exc.code is ConversationContextErrorCode.PROTOCOL_INVALID:
+            unavailable = exc.details.get("reason") == "native_tool_not_open"
+            message = (
+                "模型连续选择当前未开放的工具，本轮已停止；此前进度已保留。"
+                if unavailable else safe_public_error_detail(exc.code)
+            )
+            next_action = "请重试本轮；若仍出现，请提供错误编号以检查模型工具响应。"
+            return message, {
+                "error_type": "conversation_context", "failure_class": "conversation_context",
+                "code": code, "message": message,
+                "details": {"remediation": next_action}, "next_action": next_action,
+            }
         message = safe_public_error_detail(exc.code) or (
             "对话上下文处理失败，本次任务未执行。"
         )

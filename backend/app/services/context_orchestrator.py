@@ -1445,7 +1445,7 @@ class ContextOrchestrator:
                 )
             else:
                 warnings.append(
-                    "No exact model context profile is configured; the temporary 256K "
+                    "No exact model context profile is configured; the temporary 128K "
                     "fallback was used. Configure the exact provider/model limit when available.")
 
         for order, candidate in enumerate(selected):

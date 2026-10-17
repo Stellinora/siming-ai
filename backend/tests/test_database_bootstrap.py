@@ -18,7 +18,7 @@ from alembic import command
 from app.database.bootstrap import SCHEMA_EPOCH, alembic_config, bootstrap_database
 from app.database.models import AssistantRun, AssistantRunStep, Project
 
-HEAD_REVISION = "300a39_retire_free_onboarding"
+HEAD_REVISION = "300a40_recycle_bin"
 
 
 def _database_url(path: Path) -> str:
@@ -55,7 +55,12 @@ def test_fresh_database_is_initialized_and_versioned():
                 "assistant_transcript_import_receipts",
                 "data_integrity_quarantine",
                 "data_integrity_quarantine_batches",
+                "recycle_bin_entries",
             } <= tables
+            assert {
+                index["name"]
+                for index in inspect(engine).get_indexes("recycle_bin_entries")
+            } == {"ix_recycle_bin_expiry", "ix_recycle_bin_project"}
             assert "sort_order" in {
                 column["name"] for column in inspect(engine).get_columns("chapters")
             }
@@ -135,6 +140,41 @@ def test_current_database_bootstrap_is_idempotent():
             assert second.mode == "ready"
             assert second.backup_path is None
             assert second.schema_revision == first.schema_revision
+        finally:
+            engine.dispose()
+
+
+def test_300a39_database_adds_recycle_bin_without_changing_existing_project():
+    with TemporaryDirectory() as temp_dir:
+        url = _database_url(Path(temp_dir) / "before-recycle.db")
+        engine = create_engine(url)
+        try:
+            initialized = bootstrap_database(engine, database_url=url)
+            assert initialized.schema_revision == HEAD_REVISION
+            config = alembic_config(url)
+            with engine.begin() as connection:
+                config.attributes["connection"] = connection
+                command.downgrade(config, "300a39_retire_free_onboarding")
+            assert not inspect(engine).has_table("recycle_bin_entries")
+            with sessionmaker(bind=engine)() as db:
+                db.add(Project(id="existing-project", title="升级前作品", description="保留原有资料"))
+                db.commit()
+
+            migrated = bootstrap_database(engine, database_url=url)
+
+            assert migrated.mode == "migrated"
+            assert migrated.read_only is False
+            assert migrated.schema_revision == HEAD_REVISION
+            assert migrated.backup_path and Path(migrated.backup_path).is_file()
+            assert {
+                index["name"]
+                for index in inspect(engine).get_indexes("recycle_bin_entries")
+            } == {"ix_recycle_bin_expiry", "ix_recycle_bin_project"}
+            with engine.connect() as connection:
+                assert connection.execute(text(
+                    "SELECT title, description FROM projects WHERE id = 'existing-project'"
+                )).one() == ("升级前作品", "保留原有资料")
+                assert connection.execute(text("SELECT count(*) FROM recycle_bin_entries")).scalar_one() == 0
         finally:
             engine.dispose()
 

@@ -20,6 +20,7 @@ from app.services.conversation_context.tool_transactions import (
     ToolExecutionReceipt,
 )
 from app.services.creation_agent_turn_records import canonical_tool_call
+from app.services.workspace.native_tool_batch import NativeToolBatchNotOpen
 
 _SAFE_TOOL_SUCCESS_STATUSES = frozenset({
     "ok", "warning", "running", "queued", "completed",
@@ -206,16 +207,8 @@ def validate_native_call_batch(
             reason="category_controller_must_be_only_call",
             call_count=len(calls),
         )
-    for index, call in enumerate(calls):
-        name = str(call["function"]["name"])
-        if name not in allowed_tool_names:
-            raise _native_protocol_error(
-                iteration=iteration,
-                call_index=index,
-                reason="native_tool_not_open",
-                call_id=str(call["id"]),
-                tool=name,
-            )
+    if any(call["function"]["name"] not in allowed_tool_names for call in calls):
+        raise NativeToolBatchNotOpen(calls, allowed_tool_names)
     return calls, arguments_by_call_id
 
 

@@ -6,6 +6,7 @@ import { useAppStore } from './stores'
 import GlobalOperationCenter from './features/operations/components/GlobalOperationCenter'
 import { useGettingStartedStatus } from './features/onboarding'
 import GatewayAdminGate, { useGatewayRuntime } from './features/gateway/GatewayAdminGate'
+import PageNavigationHost from './features/navigation/PageNavigationHost'
 
 const DashboardPage = lazy(() => import('./pages/DashboardPage'))
 const ProjectWorkspace = lazy(() => import('./pages/ProjectWorkspace'))
@@ -15,6 +16,7 @@ const GettingStartedPage = lazy(() => import('./pages/GettingStartedPage'))
 const ExternalAgentPage = lazy(() => import('./pages/ExternalAgentPage'))
 const GuiPage = lazy(() => import('./pages/GuiPage'))
 const ModelCenterPage = lazy(() => import('./pages/ModelCenterPage'))
+const RecycleBinPage = lazy(() => import('./pages/RecycleBinPage'))
 
 const { Content } = Layout
 
@@ -140,6 +142,7 @@ function App() {
         <GlobalErrorBanner />
         <GlobalOperationCenter />
         <ContextInspectorHost />
+        <PageNavigationHost />
         <Content id="main-content" tabIndex={-1} style={{ padding: 0 }}>
           <FirstRunSetupGate />
           <Suspense fallback={<LoadingScreen />}>
@@ -154,6 +157,7 @@ function App() {
               <Route path="/external-agent" element={<ExternalAgentPage />} />
               <Route path="/gui" element={<GuiPage />} />
               <Route path="/models" element={<ModelCenterPage />} />
+              <Route path="/recycle-bin" element={<RecycleBinPage />} />
               <Route path="*" element={<WildcardRedirect />} />
             </Routes>
           </Suspense>

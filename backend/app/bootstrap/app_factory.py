@@ -88,6 +88,7 @@ def _register_routers(app: FastAPI) -> None:
         project_package,
         projects,
         prompt_packs,
+        recycle_bin,
         stats,
         system_assistant,
         tools,
@@ -95,6 +96,7 @@ def _register_routers(app: FastAPI) -> None:
     )
 
     routers = (
+        recycle_bin,
         projects,
         application_updates,
         config,

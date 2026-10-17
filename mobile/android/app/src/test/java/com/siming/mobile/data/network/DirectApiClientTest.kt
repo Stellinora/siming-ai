@@ -38,7 +38,7 @@ class DirectApiClientTest {
     }
 
     @Test
-    fun `task model without its own capacity profile uses 256k fallback`() {
+    fun `task model without its own capacity profile uses 128k fallback`() {
         val config = DirectApiConfig(
             displayName = "test",
             baseUrl = "https://api.example.test/v1",
@@ -59,6 +59,28 @@ class DirectApiClientTest {
         assertEquals(DirectApiConfig.CONTEXT_CAPACITY_CONFIGURED, assistant.contextCapacitySource)
         assertEquals(config.availableModels, config.summary().availableModels)
         assertEquals("writer-model", config.summary().taskModels[DirectApiConfig.TASK_WRITING])
+    }
+
+    @Test
+    fun `persisted fallback follows current default while explicit capacity is retained`() {
+        val stored = DirectApiConfig(
+            displayName = "custom",
+            baseUrl = "https://api.example.test/v1",
+            apiKey = "secret",
+            model = "legacy-model",
+            contextWindowTokens = 256_000,
+            contextCapacitySource = DirectApiConfig.CONTEXT_CAPACITY_FALLBACK,
+        )
+        val resolved = Json.decodeFromString<DirectApiConfig>(
+            Json.encodeToString(DirectApiConfig.serializer(), stored),
+        ).forTask(DirectApiConfig.TASK_ASSISTANT)
+        assertEquals(128_000, resolved.contextWindowTokens)
+        assertEquals(DirectApiConfig.CONTEXT_CAPACITY_FALLBACK, resolved.contextCapacitySource)
+        listOf(null, DirectApiConfig.CONTEXT_CAPACITY_CONFIGURED, DirectApiConfig.CONTEXT_CAPACITY_CATALOG)
+            .forEach { source ->
+                assertEquals(256_000, stored.copy(contextCapacitySource = source)
+                    .forTask(DirectApiConfig.TASK_ASSISTANT).contextWindowTokens)
+            }
     }
 
     @Test
@@ -309,7 +331,7 @@ class DirectApiClientTest {
                         config(server, DirectApiConfig.PROTOCOL_CHAT_COMPLETIONS),
                         "system",
                         "user",
-                        maxResumeAttempts = 1,
+                        maxResumeAttempts = 8,
                         onCheckpoint = { checkpoints += it },
                     )
                 }
@@ -486,11 +508,11 @@ class DirectApiClientTest {
     }
 
     @Test
-    fun `deepseek thinking stream omits unsupported tool choice without disabling thinking`() = withServer(
+    fun `proxy named deepseek preserves tool choice and explicit thinking`() = withServer(
         object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
-                assertFalse("tool_choice" in body)
+                assertEquals("required", body["tool_choice"]?.jsonPrimitive?.content)
                 assertEquals("deepseek-flash", body.getValue("model").jsonPrimitive.content)
                 assertEquals(
                     "enabled",
@@ -520,11 +542,11 @@ class DirectApiClientTest {
     }
 
     @Test
-    fun `gemini responses stream omits unsupported tool choice`() = withServer(
+    fun `proxy named gemini preserves responses tool choice`() = withServer(
         object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
-                assertFalse("tool_choice" in body)
+                assertEquals("auto", body["tool_choice"]?.jsonPrimitive?.content)
                 return sseResponse(
                     """{"type":"response.output_item.added","item":{"type":"function_call","id":"item-gemini","call_id":"call-gemini","name":"list_chapters","arguments":"{}"}}""",
                     """{"type":"response.completed","response":{"status":"completed","output":[]}}""",
@@ -617,7 +639,7 @@ class DirectApiClientTest {
     }
 
     @Test
-    fun `tool choice rejection after visible output is not replayed`() {
+    fun `terminal failed response discards buffered text and is not replayed`() {
         val attempts = AtomicInteger()
         withServer(
             object : Dispatcher() {
@@ -631,7 +653,7 @@ class DirectApiClientTest {
             },
         ) { server ->
             val content = mutableListOf<String>()
-            assertFailsWith<DirectApiHttpException> {
+            assertFailsWith<DirectNativeToolProtocolException> {
                 runBlocking {
                     testClient().streamAgentTurn(
                         config(server, DirectApiConfig.PROTOCOL_RESPONSES),
@@ -642,7 +664,7 @@ class DirectApiClientTest {
                     )
                 }
             }
-            assertEquals(listOf("已输出片段"), content)
+            assertTrue(content.isEmpty())
             assertEquals(1, attempts.get())
         }
     }

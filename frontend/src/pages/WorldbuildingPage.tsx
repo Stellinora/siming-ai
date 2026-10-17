@@ -244,7 +244,7 @@ function WorldbuildingPage({ projectId }: WorldbuildingPageProps) {
   const deleteEntry = async (entryId: string) => {
     try {
       await apiClient.delete(`/projects/${projectId}/worldbuilding/${entryId}`)
-      message.success('世界观条目已删除')
+      message.success('世界观条目已移至回收站，7 天内可恢复')
       fetchEntries()
     } catch (err: any) {
       message.error(err.message || '删除世界观条目失败')
@@ -432,7 +432,7 @@ function WorldbuildingPage({ projectId }: WorldbuildingPageProps) {
             )}
             <Popconfirm
               title="删除条目"
-              description="确定删除这条世界观设定吗？"
+              description="这条世界观设定将移至回收站，7 天内可恢复。"
               okText="删除"
               cancelText="取消"
               okButtonProps={{ danger: true }}

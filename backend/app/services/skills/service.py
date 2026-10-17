@@ -443,7 +443,8 @@ def delete_skill(db: Session, project_id: str, skill_id: str) -> None:
     skill = get_skill_or_404(db, project_id, skill_id)
     if skill.is_builtin:
         raise ValidationError("内置技能不可删除，只能禁用")
-    db.delete(skill)
+    from app.services.recycle_bin import delete_to_recycle
+    delete_to_recycle(db, skill)
     commit_session(db)
 
 

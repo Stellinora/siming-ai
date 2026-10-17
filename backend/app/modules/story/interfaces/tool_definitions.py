@@ -660,10 +660,10 @@ TOOL_DEFINITIONS: tuple[ToolDef, ...] = (
             "summary": {"type": "string", "description": "更新摘要"},
             "status": {"type": "string", "description": "更新状态：pending|in_progress|completed"},
             "node_type": {"type": "string", "description": "更新节点类型：volume|chapter|section"},
-            "character_names": {
+            "character_ids": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "更新涉及的角色名列表（替换全部已有关联）",
+                "description": "当前作品内真实角色 ID 列表（替换全部已有关联，空数组清除关联）",
             },
             "source_chapter_id": {"type": "string", "description": "更新关联的源章节ID"},
             "actual_summary": {"type": "string", "description": "更新实际完成后的摘要"},

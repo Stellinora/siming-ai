@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { Modal } from 'antd'
 import type { SaveStatus } from '../components/interaction'
+import { registerUnsavedEditor } from '../shared/pageNavigationGuard'
 
 /**
  * 拦截浏览器关闭/刷新，防止未保存数据丢失。
@@ -13,9 +14,12 @@ import type { SaveStatus } from '../components/interaction'
  */
 export function useUnsavedGuard() {
   const dirtyRef = useRef(false)
+  const editRevisionRef = useRef(0)
   const [isDirty, setIsDirty] = useState(false)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved')
   const [saveError, setSaveError] = useState<string | null>(null)
+
+  useEffect(() => registerUnsavedEditor(() => dirtyRef.current), [])
 
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
@@ -29,6 +33,7 @@ export function useUnsavedGuard() {
   }, [])
 
   const markDirty = useCallback(() => {
+    editRevisionRef.current += 1
     dirtyRef.current = true
     setIsDirty(true)
     setSaveStatus('dirty')
@@ -77,6 +82,8 @@ export function useUnsavedGuard() {
   }, [])
 
   return {
+    getEditRevision: useCallback(() => editRevisionRef.current, []),
+    hasUnsavedChanges: useCallback(() => dirtyRef.current, []),
     isDirty,
     saveStatus,
     saveError,

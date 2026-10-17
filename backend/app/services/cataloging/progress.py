@@ -29,6 +29,7 @@ _PROGRESS_EVENT = "cataloging_progress"
 _DETAIL_TYPES = {
     "cataloging_stage",
     "cataloging_tool_result",
+    "cataloging_plan_correction",
     "cataloging_retry",
     "cataloging_warning",
     "parse_warning",

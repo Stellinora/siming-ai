@@ -107,6 +107,20 @@ select {
   gap: 4px;
 }
 
+@media (max-width: 1450px) {
+  .system-nav .system-nav-links {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .system-nav-tools { grid-column: 3; }
+}
+
+@media (max-width: 600px) {
+  .system-nav-tools { flex-wrap: wrap; justify-content: flex-end; }
+  .system-nav-tools .ant-btn { padding-inline: 8px; }
+  .system-nav-tools .page-navigation-trigger { white-space: nowrap; }
+}
+
 .system-nav-tools .ant-btn {
   min-height: 44px;
   min-width: 44px;

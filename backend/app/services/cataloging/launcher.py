@@ -412,6 +412,8 @@ def create_and_queue_cataloging_job(
     """Create one canonical job and optionally schedule its worker."""
 
     chapters = ordered_chapters(db, project_id, chapter_ids)
+    if not chapters:
+        raise ValueError("当前没有可建档的章节")
     reusable = _reusable_current_version_runs(db, project_id, chapters)
     missing_chapters = [chapter for chapter in chapters if chapter.id not in reusable]
     active_reused = {

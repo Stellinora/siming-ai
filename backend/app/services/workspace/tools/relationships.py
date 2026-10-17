@@ -128,7 +128,8 @@ async def delete_relationship(
         return {"tool": "delete_relationship", "status": "skipped", "detail": "未找到关系"}
     deleted_ids = [str(rel.id) for rel in relationships]
     for rel in relationships:
-        db.delete(rel)
+        from app.services.recycle_bin import delete_to_recycle
+        delete_to_recycle(db, rel)
     project = db.query(Project).filter(Project.id == project_id).first()
     if project:
         queue_content_sync(

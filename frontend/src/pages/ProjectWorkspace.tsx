@@ -4,6 +4,7 @@ import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { useProject } from '../features/projects'
 import {
   AuditOutlined,
+  DeleteOutlined,
   BarChartOutlined,
   BookOutlined,
   BranchesOutlined,
@@ -34,6 +35,9 @@ import ThemeSwitcher from '../themes/ThemeSwitcher'
 import { QueryStateNotice } from '../shared/ui/runtime'
 import { CatalogingRefreshBridge } from '../features/cataloging/CatalogingRefreshBridge'
 import './ProjectWorkspace.css'
+import PageNavigation from '../components/PageNavigation'
+import { PROJECT_PAGES, type ProjectPageKey } from '../shared/navigation'
+import { confirmPageNavigation } from '../shared/pageNavigationGuard'
 
 const { Sider, Content } = Layout
 
@@ -54,27 +58,29 @@ const NarrativeGovernancePage = lazy(() => import('./NarrativeGovernancePage'))
 const ContextGovernancePage = lazy(() => import('./ContextGovernancePage'))
 const CreationBriefPage = lazy(() => import('./CreationBriefPage'))
 
-type MenuKey = 'creation' | 'world' | 'characters' | 'outline' | 'writer' | 'export' | 'stats' | 'deconstruct' | 'cataloging' | 'visualization' | 'governance' | 'context' | 'import' | 'skills' | 'prompts' | 'scheduler'
+type MenuKey = ProjectPageKey
 
-/** Menu key → Chinese page title mapping */
-const PAGE_TITLES: Record<MenuKey, string> = {
-  creation: '创作设定',
-  context: 'AI 参考资料',
-  writer: '写作工作台',
-  outline: '大纲规划',
-  characters: '角色管理',
-  world: '世界观',
-  stats: '统计追踪',
-  deconstruct: '拆书分析',
-  cataloging: '作品建档',
-  visualization: '可视化',
-  governance: '叙事治理',
-  skills: '技能管理',
-  prompts: '提示词投稿',
-  scheduler: '自动任务',
-  import: '内容导入',
-  export: '导出',
+const PAGE_TITLES = Object.fromEntries(PROJECT_PAGES.map((page) => [page.key, page.title])) as Record<MenuKey, string>
+const PAGE_ICONS = {
+  writer: <BookOutlined />, outline: <BranchesOutlined />, creation: <CompassOutlined />,
+  characters: <TeamOutlined />, world: <GlobalOutlined />, visualization: <ApartmentOutlined />,
+  governance: <SafetyCertificateOutlined />, context: <AuditOutlined />, cataloging: <DatabaseOutlined />,
+  stats: <BarChartOutlined />, deconstruct: <ThunderboltOutlined />, import: <FileAddOutlined />,
+  export: <ExportOutlined />, scheduler: <ClockCircleOutlined />, skills: <BulbOutlined />, prompts: <FileTextOutlined />,
 }
+const MENU_GROUPS = [
+  { key: 'story-library', label: '故事资料', icon: <TeamOutlined /> },
+  { key: 'continuity', label: '连续性与档案', icon: <SafetyCertificateOutlined /> },
+  { key: 'toolbox', label: '工具与发布', icon: <ThunderboltOutlined /> },
+]
+const menuParentByView = Object.fromEntries(PROJECT_PAGES.map((page) => [
+  page.key, MENU_GROUPS.find((group) => group.label === page.group)?.key,
+])) as Partial<Record<MenuKey, string>>
+const menuItem = (page: typeof PROJECT_PAGES[number]) => ({ key: page.key, icon: PAGE_ICONS[page.key], label: page.label })
+const menuItems = [
+  ...PROJECT_PAGES.filter((page) => page.group === '创作').map(menuItem),
+  ...MENU_GROUPS.map((group) => ({ ...group, children: PROJECT_PAGES.filter((page) => page.group === group.label).map(menuItem) })),
+]
 
 function AiPanelColumn({ aiCollapsed, setAiCollapsed }: { aiCollapsed: boolean; setAiCollapsed: (v: boolean) => void }) {
   const { projectId } = useParams<{ projectId: string }>()
@@ -113,7 +119,7 @@ function AiPanelColumn({ aiCollapsed, setAiCollapsed }: { aiCollapsed: boolean; 
           modelOptions={modelOptions}
           modelsLoading={modelsLoading}
           onTaskModelChange={setTaskModel}
-          onManageModels={() => navigate('/settings')}
+          onManageModels={() => confirmPageNavigation(() => navigate('/settings'))}
           onApplied={triggerRefresh}
         />
       )}
@@ -146,10 +152,17 @@ function ProjectWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState('sidebar_collapsed', false)
   const [aiCollapsed, setAiCollapsed] = usePersistedState('ai_panel_collapsed', true)
-  const navigate = useNavigate()
+  const routerNavigate = useNavigate()
+  const navigate = (path: string) => confirmPageNavigation(() => routerNavigate(path))
   const projectQuery = useProject(projectId)
   const requestedView = searchParams.get('view') as MenuKey | null
   const activeKey: MenuKey = requestedView && requestedView in PAGE_TITLES ? requestedView : 'writer'
+  const [openGroups, setOpenGroups] = useState<string[]>([])
+
+  useEffect(() => {
+    const parent = menuParentByView[activeKey]
+    if (parent) setOpenGroups((current) => current.includes(parent) ? current : [...current, parent])
+  }, [activeKey])
 
   useEffect(() => {
     if (searchParams.get('assistant') !== 'open') return
@@ -160,11 +173,14 @@ function ProjectWorkspace() {
   }, [searchParams, setAiCollapsed, setSearchParams])
 
   const selectView = useCallback((view: MenuKey) => {
-    const next = new URLSearchParams(searchParams)
-    if (view === 'writer') next.delete('view')
-    else next.set('view', view)
-    setSearchParams(next, { replace: false })
-  }, [searchParams, setSearchParams])
+    if (view === activeKey) return
+    confirmPageNavigation(() => {
+      const next = new URLSearchParams(searchParams)
+      if (view === 'writer') next.delete('view')
+      else next.set('view', view)
+      setSearchParams(next, { replace: false })
+    })
+  }, [activeKey, searchParams, setSearchParams])
 
   useEffect(() => {
     const collapseForCompactWorkspace = () => {
@@ -176,63 +192,6 @@ function ProjectWorkspace() {
   }, [setSidebarCollapsed])
 
   const projectTitle = projectQuery.data?.title || ''
-
-  const menuItems = [
-    { key: 'writer', icon: <BookOutlined />, label: '写作' },
-    { key: 'outline', icon: <BranchesOutlined />, label: '大纲' },
-    {
-      key: 'story-library',
-      icon: <TeamOutlined />,
-      label: '故事资料',
-      children: [
-        { key: 'creation', icon: <CompassOutlined />, label: '创作设定' },
-        { key: 'characters', icon: <TeamOutlined />, label: '角色' },
-        { key: 'world', icon: <GlobalOutlined />, label: '世界观' },
-        { key: 'visualization', icon: <ApartmentOutlined />, label: '关系图' },
-      ],
-    },
-    {
-      key: 'continuity',
-      icon: <SafetyCertificateOutlined />,
-      label: '连续性与档案',
-      children: [
-        { key: 'governance', icon: <SafetyCertificateOutlined />, label: '叙事治理' },
-        { key: 'context', icon: <AuditOutlined />, label: 'AI 参考资料' },
-        { key: 'cataloging', icon: <DatabaseOutlined />, label: '作品建档' },
-        { key: 'stats', icon: <BarChartOutlined />, label: '统计追踪' },
-      ],
-    },
-    {
-      key: 'toolbox',
-      icon: <ThunderboltOutlined />,
-      label: '工具与发布',
-      children: [
-        { key: 'deconstruct', icon: <ThunderboltOutlined />, label: '拆书分析' },
-        { key: 'import', icon: <FileAddOutlined />, label: '内容导入' },
-        { key: 'export', icon: <ExportOutlined />, label: '导出作品' },
-        { key: 'scheduler', icon: <ClockCircleOutlined />, label: '自动任务' },
-        { key: 'skills', icon: <BulbOutlined />, label: '技能管理' },
-        { key: 'prompts', icon: <FileTextOutlined />, label: '提示词投稿' },
-      ],
-    },
-  ]
-
-  const menuParentByView: Partial<Record<MenuKey, string>> = {
-    creation: 'story-library',
-    characters: 'story-library',
-    world: 'story-library',
-    visualization: 'story-library',
-    governance: 'continuity',
-    context: 'continuity',
-    cataloging: 'continuity',
-    stats: 'continuity',
-    deconstruct: 'toolbox',
-    import: 'toolbox',
-    export: 'toolbox',
-    scheduler: 'toolbox',
-    skills: 'toolbox',
-    prompts: 'toolbox',
-  }
 
   /** Tab renderers — wrapped in closures for TabCache lazy evaluation */
   const tabRenderers = projectId
@@ -293,13 +252,21 @@ function ProjectWorkspace() {
             mode="inline"
             inlineCollapsed={sidebarCollapsed}
             selectedKeys={[activeKey]}
-            defaultOpenKeys={menuParentByView[activeKey] ? [menuParentByView[activeKey]!] : []}
+            openKeys={sidebarCollapsed ? undefined : openGroups}
+            onOpenChange={setOpenGroups}
             onClick={({ key }) => {
               if (key in PAGE_TITLES) selectView(key as MenuKey)
             }}
             items={menuItems}
             className="project-workspace-menu"
           />
+          <div className="project-workspace-footer">
+            <Tooltip title="恢复 7 日内删除的数据" placement="right">
+              <Button type="text" icon={<DeleteOutlined />} aria-label="回收站" onClick={() => navigate(`/recycle-bin?project=${encodeURIComponent(projectId || '')}`)}>
+                {!sidebarCollapsed && '回收站'}
+              </Button>
+            </Tooltip>
+          </div>
         </Sider>
         <div className="project-workspace-column">
           <header className="project-workspace-header">
@@ -324,6 +291,7 @@ function ProjectWorkspace() {
               <span className="project-workspace-view-title">{PAGE_TITLES[activeKey]}</span>
             </nav>
             <div className="project-workspace-actions">
+              <PageNavigation />
               <span id="global-operation-nav-slot" className="global-operation-nav-slot" />
               <ThemeSwitcher />
               <Tooltip title={aiCollapsed ? '展开 AI 助手' : '收起 AI 助手'}>

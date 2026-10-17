@@ -68,7 +68,7 @@ class SqlAlchemyContextGovernance:
                 "sendable_for_hard_budget": True,
                 "reason": (
                     "No exact capacity profile is configured. Siming temporarily binds a "
-                    "256K window, counts the full request with a conservative byte bound, "
+                    "128K window, counts the full request with a conservative byte bound, "
                     "and lets an exact provider/model profile override it."
                 ),
             },

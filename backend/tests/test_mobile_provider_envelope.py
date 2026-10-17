@@ -141,13 +141,13 @@ def test_mobile_provider_envelope_decrypts_without_persisting_key(tmp_path, monk
                     device_id="android-device",
                     project_id="project-1",
                     issued_at=int(time.time() * 1000),
-                    context_window_tokens=256_000,
+                    context_window_tokens=128_000,
                     capacity_assurance="unverified",
                 ),
                 device_id="android-device",
                 project_id="project-1",
             )
-            assert fallback.context_window_tokens == 256_000
+            assert fallback.context_window_tokens == 128_000
             assert fallback.capacity_assurance == "unverified"
             assert "phone-secret-key" not in identity.private_key_encrypted
     finally:
@@ -323,7 +323,7 @@ def test_request_provider_capacity_preserves_unverified_fallback_assurance():
         default_model="phone-model",
         api_key="phone-secret-key",
         base_url="https://8.8.8.8/v1",
-        context_window_tokens=256_000,
+        context_window_tokens=128_000,
         max_output_tokens=8_192,
         safety_margin_tokens=4_096,
         capacity_assurance="unverified",
@@ -332,7 +332,7 @@ def test_request_provider_capacity_preserves_unverified_fallback_assurance():
     with use_request_provider(ephemeral):
         capacity = active_request_capacity("mobile_openai", "phone-model")
         assert capacity is not None
-        assert capacity.context_window_tokens == 256_000
+        assert capacity.context_window_tokens == 128_000
         assert capacity.known is False
 
 

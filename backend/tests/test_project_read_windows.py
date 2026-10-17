@@ -341,12 +341,12 @@ def test_visible_reasoning_handles_done_only_replacements_and_multiple_iteration
     second = NativeStepCapture()
     events += executor._capture_done(second, {"reasoning_content": "再核对"}, 2)
     assert executor._capture_done(second, {"reasoning_content": "再核对"}, 2) == []
-    assert executor._capture_done(second, {"reasoning_content": ""}, 2) == []
-    assert second.reasoning == "再核对"
+    events += executor._capture_done(second, {"reasoning_content": ""}, 2)
+    assert second.reasoning == ""
     rendered = ""
     for event in events:
         data = json.loads(event)
         rendered = data["delta"] if data["replace"] else rendered + data["delta"]
-    assert rendered == state.visible_reasoning == "已读取\n\n再核对"
+    assert rendered == state.visible_reasoning == "已读取"
     assert "PRIVATE" not in "".join(events)
     assert first.provider_state == [{"opaque": "PRIVATE"}]

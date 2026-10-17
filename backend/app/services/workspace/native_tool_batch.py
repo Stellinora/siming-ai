@@ -23,10 +23,27 @@ class NativeToolBatchValidationError(ValueError):
 MAX_NATIVE_TOOL_NAME_REJECTIONS = 3
 
 
-class NativeToolBatchNotOpen(NativeToolBatchValidationError):
+class NativeToolBatchRecoverable(NativeToolBatchValidationError):
+    """A structurally valid, unexecuted batch can receive native error receipts."""
+
+    def _receipt(self, tool_name: str, detail: str, **data: Any) -> dict[str, Any]:
+        return {
+            "tool": tool_name, "status": "error", "detail": detail,
+            "data": {
+                "reason": self.reason, **data,
+                "available_tools": self.allowed_tool_names,
+                "batch_call_count": len(self.calls),
+                "executed": False, "retryable": self.recovery_fits,
+            },
+        }
+
+
+class NativeToolBatchNotOpen(NativeToolBatchRecoverable):
     """Structurally valid calls retained only to receipt a whole-batch denial."""
 
-    def __init__(self, calls: list[dict[str, Any]], allowed_tool_names: set[str] | frozenset[str]) -> None:
+    def __init__(
+        self, calls: list[dict[str, Any]], allowed_tool_names: set[str] | frozenset[str],
+    ) -> None:
         unavailable = [call for call in calls if call["function"]["name"] not in allowed_tool_names]
         first = unavailable[0]
         super().__init__(
@@ -46,23 +63,40 @@ class NativeToolBatchNotOpen(NativeToolBatchValidationError):
             "需要其他能力时单独调用 set_tool_categories。"
             if TOOL_CATEGORY_CONTROLLER in self.allowed_tool_names else ""
         )
-        return {
-            "tool": tool_name,
-            "status": "error",
-            "detail": (
-                "本批次含有当前未开放的工具，所有调用均未执行。请根据本步骤实际提供的工具名称与"
-                f"参数 Schema 重新选择调用；{category_hint}"
-                "不要猜测工具别名，也不要把同批其他调用当作已成功。"
-            ),
-            "data": {
-                "reason": self.reason,
-                "unavailable_tools": self.details["tools"],
-                "available_tools": self.allowed_tool_names,
-                "batch_call_count": len(self.calls),
-                "executed": False,
-                "retryable": self.recovery_fits,
-            },
-        }
+        return self._receipt(
+            tool_name,
+            "本批次含有当前未开放的工具，所有调用均未执行。请根据本步骤实际提供的工具名称与"
+            f"参数 Schema 重新选择调用；{category_hint}"
+            "不要猜测工具别名，也不要把同批其他调用当作已成功。",
+            unavailable_tools=self.details["tools"],
+        )
+
+
+class NativeToolBatchCatalogingMixed(NativeToolBatchRecoverable):
+    """Keep the singleton write boundary and let the model choose a new batch."""
+
+    def __init__(
+        self, calls: list[dict[str, Any]], allowed_tool_names: set[str] | frozenset[str],
+        *, cataloging_tool: str,
+    ) -> None:
+        super().__init__(
+            "cataloging_tool_must_be_only_call",
+            "建档写入或控制工具必须是模型步骤中唯一的业务调用，整批未执行。",
+            tools=[call["function"]["name"] for call in calls], call_count=len(calls),
+            cataloging_tool=cataloging_tool,
+        )
+        self.calls = calls
+        self.allowed_tool_names = sorted(allowed_tool_names)
+        self.recovery_fits = False
+
+    def model_error_result(self, tool_name: str) -> dict[str, Any]:
+        return self._receipt(
+            tool_name,
+            "本批混入建档写入或控制调用，所有调用均未执行。"
+            "保存候选必须是本模型步骤唯一的工具调用，不能与读取或另一次保存同批。"
+            "多个只读工具可以同批；请自行选择下一步并重新调用，不要假定本批任何操作成功。",
+            tools=self.details["tools"],
+        )
 
 
 @dataclass(frozen=True)
@@ -90,6 +124,7 @@ def validate_workspace_native_tool_batch(
     resolve_tool: Callable[[str], Any | None],
     require_initial_controller: bool,
     singleton_cataloging_tools: bool = True,
+    authorize_before_semantics: bool = False,
 ) -> ValidatedNativeToolBatch:
     """Validate every native call before returning any executable arguments."""
 
@@ -100,12 +135,25 @@ def validate_workspace_native_tool_batch(
         calls.append(call)
         arguments_by_id[str(call["id"])] = arguments
     names = [str(call["function"]["name"]) for call in calls]
-    _validate_batch_semantics(
-        names,
-        resolve_tool=resolve_tool,
-        require_initial_controller=require_initial_controller,
-        singleton_cataloging_tools=singleton_cataloging_tools,
-    )
+    if authorize_before_semantics and any(name not in allowed_tool_names for name in names):
+        # Fixed tasks expose their complete contract directly. Preserve native
+        # receipts for closed tools only after the entire structure is valid.
+        raise NativeToolBatchNotOpen(calls, allowed_tool_names)
+    try:
+        _validate_batch_semantics(
+            names,
+            resolve_tool=resolve_tool,
+            require_initial_controller=require_initial_controller,
+            singleton_cataloging_tools=singleton_cataloging_tools,
+        )
+    except NativeToolBatchValidationError as error:
+        if error.reason == "cataloging_tool_must_be_only_call":
+            # Every call ID and arguments object has already passed structural
+            # validation. No handler may execute before this whole-batch check.
+            raise NativeToolBatchCatalogingMixed(
+                calls, allowed_tool_names, cataloging_tool=error.details["cataloging_tool"],
+            ) from error
+        raise
     if any(name not in allowed_tool_names for name in names):
         raise NativeToolBatchNotOpen(calls, allowed_tool_names)
     return ValidatedNativeToolBatch(tuple(calls), arguments_by_id)
@@ -230,7 +278,9 @@ def _validate_batch_semantics(
 
 __all__ = [
     "MAX_NATIVE_TOOL_NAME_REJECTIONS",
+    "NativeToolBatchCatalogingMixed",
     "NativeToolBatchNotOpen",
+    "NativeToolBatchRecoverable",
     "NativeToolBatchValidationError",
     "ValidatedNativeToolBatch",
     "validate_workspace_native_tool_batch",

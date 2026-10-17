@@ -1,9 +1,4 @@
-"""Provider capability metadata used by the LLM gateway.
-
-The adapters intentionally stay thin. Provider quirks that affect request
-shape live here so caller code does not need to know which APIs reject which
-parameters.
-"""
+"""Native tool capability checks and endpoint request adjustments for the gateway."""
 
 from __future__ import annotations
 
@@ -11,6 +6,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.core.provider_errors import provider_field_rejected
+
+from .request_policy import provider_tool_choice
 
 TOOL_CAPABILITY_UNAVAILABLE = "tool_capability_unavailable"
 TOOL_CAPABILITY_UNAVAILABLE_MESSAGE = (
@@ -30,13 +27,11 @@ class ToolCapabilityUnavailableError(RuntimeError):
 @dataclass(frozen=True)
 class ProviderCapabilities:
     supports_tools: bool = True
-    supports_tool_choice: bool = True
     supports_streaming_tools: bool = True
 
 
 _NO_NATIVE_TOOLS = ProviderCapabilities(
     supports_tools=False,
-    supports_tool_choice=False,
     supports_streaming_tools=False,
 )
 
@@ -45,11 +40,8 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapabilities] = {
     "openai": ProviderCapabilities(),
     "qwen": ProviderCapabilities(),
     "anthropic": ProviderCapabilities(),
-    # DeepSeek V4 thinking mode accepts tools but rejects OpenAI tool_choice.
-    "deepseek": ProviderCapabilities(supports_tool_choice=False),
-    # Gemini OpenAI-compatible endpoint can reject tool_choice when the selected
-    # model is in thinking mode. Leaving tools present still lets it call tools.
-    "gemini": ProviderCapabilities(supports_tool_choice=False),
+    "deepseek": ProviderCapabilities(),
+    "gemini": ProviderCapabilities(),
     # Agent CLIs do not emit OpenAI tool-call envelopes. Authorized workflows
     # attach Siming as a native MCP server inside the CLI process instead.
     "claude_cli": _NO_NATIVE_TOOLS,
@@ -75,21 +67,24 @@ def provider_capabilities(provider: str) -> ProviderCapabilities:
     return PROVIDER_CAPABILITIES.get(provider, ProviderCapabilities())
 
 
+def require_native_tool_capability(provider: str, tools: list[dict] | None) -> None:
+    if tools and not provider_capabilities(provider).supports_tools:
+        raise ToolCapabilityUnavailableError()
+
+
 def sanitize_tool_request(
     provider: str,
     tools: list[dict] | None,
     tool_choice: str | dict | None,
+    *, base_url: str | None = None, api_protocol: str = "chat_completions",
 ) -> tuple[list[dict] | None, str | dict | None, list[str]]:
     """Return provider-safe tool arguments or fail before unsupported tool I/O."""
-    caps = provider_capabilities(provider)
     notes: list[str] = []
     safe_tools = tools
-    safe_tool_choice = tool_choice
+    safe_tool_choice = provider_tool_choice(base_url, api_protocol, tool_choice)
 
-    if tools and not caps.supports_tools:
-        raise ToolCapabilityUnavailableError()
-    elif tool_choice is not None and not caps.supports_tool_choice:
-        safe_tool_choice = None
+    require_native_tool_capability(provider, tools)
+    if tool_choice is not None and safe_tool_choice is None:
         notes.append(f"{provider} 不支持当前 tool_choice 参数，已让模型自动选择工具")
 
     return safe_tools, safe_tool_choice, notes

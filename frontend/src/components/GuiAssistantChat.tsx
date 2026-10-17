@@ -1432,7 +1432,7 @@ function GuiAssistantChat() {
   const deleteConversation = (convId: string) => {
     Modal.confirm({
       title: '删除对话',
-      content: '确定要删除这条对话记录吗？删除后无法恢复。',
+      content: '这条对话记录将移至回收站，7 天内可恢复。',
       okText: '删除',
       cancelText: '取消',
       okButtonProps: { danger: true },
@@ -1441,7 +1441,7 @@ function GuiAssistantChat() {
           await apiClient.delete(`/ai/assistant/conversations/${convId}`)
           setConversations((prev) => prev.filter((item) => item.id !== convId))
           if (activeConvId === convId) await startNewConversation()
-          message.success('对话已删除')
+          message.success('对话已移至回收站，7 天内可恢复')
         } catch (err: any) {
           message.error(err.message || '删除对话失败')
         }

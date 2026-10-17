@@ -320,7 +320,8 @@ class SqlAlchemyChapterWorkspace:
         chapter = self._chapter(project_id, chapter_id)
         content_file_path = chapter.content_file_path
         title = chapter.title
-        self._session.delete(chapter)
+        from app.services.recycle_bin import delete_to_recycle
+        delete_to_recycle(self._session, chapter)
         self._session.flush()
         rollback = pop_delete_rollback_result(self._session, chapter_id) or {
             "affected_chapter_ids": [chapter_id],

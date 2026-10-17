@@ -234,7 +234,7 @@ function DashboardPage() {
     try {
       await apiClient.delete(`/novel-creation/sessions/${sessionId}`)
       setCreationDrafts((items) => items.filter((item) => item.id !== sessionId))
-      message.success('立项草稿已删除')
+      message.success('立项草稿已移至回收站，7 天内可恢复')
     } catch (error) {
       message.error(error instanceof Error ? error.message : '删除立项草稿失败')
     }
@@ -357,7 +357,7 @@ function DashboardPage() {
   const handleDelete = async (id: string) => {
     try {
       await deleteProjectMutation.mutateAsync(id)
-      message.success('作品已删除')
+      message.success('作品已移至回收站，7 天内可恢复')
     } catch (error) {
       message.error(error instanceof Error ? error.message : '删除作品失败')
     }
@@ -487,7 +487,12 @@ function DashboardPage() {
                     aria-label="删除立项草稿"
                     onClick={(event) => {
                       event.stopPropagation()
-                      void deleteCreationDraft(draft.id)
+                      Modal.confirm({
+                        title: '删除立项草稿？',
+                        content: '立项草稿及相关资料将移至回收站，7 天内可恢复。',
+                        okText: '移至回收站', cancelText: '取消',
+                        onOk: () => deleteCreationDraft(draft.id),
+                      })
                     }}
                   />
                 )}
@@ -548,7 +553,7 @@ function DashboardPage() {
                           event.stopPropagation()
                           Modal.confirm({
                             title: '确认删除作品',
-                            content: `确定要删除《${project.title}》吗？删除作品会同时删除关联的角色、大纲、章节等数据，此操作不可恢复。`,
+                            content: `确定要删除《${project.title}》吗？作品及关联的角色、大纲、章节等数据将移至回收站，7 天内可恢复。`,
                             okText: '删除',
                             cancelText: '取消',
                             okButtonProps: { danger: true },

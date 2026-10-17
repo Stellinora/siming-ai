@@ -58,6 +58,15 @@ class LLMOutputLimitError(LLMError):
         super().__init__("模型单次输出额度已用尽，仍未形成完整工具调用")
 
 
+class LLMIncompleteResponseError(LLMError):
+    """HTTP succeeded but the provider did not complete the response."""
+
+    def __init__(self, reason: str, max_tokens: int | None = None):
+        self.reason = reason
+        self.max_tokens = max_tokens
+        super().__init__(f"模型响应未完成（{reason}），未交付正文或执行工具；请调整输出额度或检查模型状态")
+
+
 async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
     """Handle custom application exceptions."""
     return JSONResponse(

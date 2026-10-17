@@ -93,6 +93,8 @@ def _run_legacy_startup_recovery() -> None:
     recover_content_sync_queue()
     _recover_gateway_sync_capture_queue()
     with SqlAlchemyUnitOfWork(SessionLocal) as uow:
+        from ..services.recycle_bin import purge_expired
+        purge_expired(uow.session)
         repair_runtime_readiness_demotions(uow.session)
         mark_interrupted_assistant_runs(uow.session)
         # Creation runs own their durable result state. Reconcile them before

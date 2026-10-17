@@ -57,9 +57,15 @@ def test_mobile_cataloging_request_policy_matches_pc_execution():
     assert request["stream_idle_timeout_seconds"] == CATALOGING_TIMEOUT_SECONDS == 300
     assert request["max_output_tokens"] == CATALOGING_MAX_TOKENS
     assert request["temperature"] == CATALOGING_TEMPERATURE
-    assert request["non_thinking_providers"] == ["deepseek"]
-    assert cataloging_extra_body("deepseek:deepseek-flash")["thinking"] == {"type": "disabled"}
+    assert request["task_type"] == "cataloging"
+    assert cataloging_extra_body("deepseek:deepseek-flash") == {"moshu_task_type": "cataloging"}
     assert "thinking" not in cataloging_extra_body("openai:fixture")
+
+
+def test_android_request_policy_is_generated_from_pc_authority():
+    namespace = runpy.run_path(str(EXPORTER), run_name="mobile_request_policy_test")
+    source = ROOT / "mobile/android/app/src/main/java/com/siming/mobile/data/network/GeneratedModelRequestPolicy.kt"
+    assert source.read_text(encoding="utf-8") == namespace["build_model_request_policy_source"]()
 
 
 def test_android_prompt_contract_contains_full_nested_writer_pipeline():

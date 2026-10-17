@@ -275,7 +275,6 @@ def delete_character(
     character = get_character_or_404(db, project_id, character_id)
     content_file_path = character.content_file_path
     workspace = character_workspace(db)
-    workspace.delete_relationships(project_id, character.id)
     workspace.delete(character)
     command.queue(
         ContentSyncIntent(

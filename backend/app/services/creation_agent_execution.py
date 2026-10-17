@@ -37,6 +37,7 @@ from app.services.conversation_context.tool_transactions import (
     ToolExecutionReceipt,
     ToolTransaction,
 )
+from app.services.creation_agent_batch_rejection import reject_creation_native_batch
 from app.services.creation_agent_native_protocol import (
     build_creation_execution_receipt,
     safe_creation_tool_result,
@@ -70,6 +71,7 @@ from app.services.creation_agent_turn_records import (
     record_prompt_metric,
 )
 from app.services.workspace.executor import execute_workspace_action
+from app.services.workspace.native_tool_batch import NativeToolBatchNotOpen
 from app.services.workspace.registry import registry
 from app.services.workspace.tool_result_projection import (
     MAX_CONSECUTIVE_TOOL_CAPACITY_REJECTIONS,
@@ -659,15 +661,19 @@ async def _run_native_step(
         if isinstance(result.get("tool_calls"), list)
         else []
     )
-    calls, arguments_by_call_id = validate_native_call_batch(
-        raw_calls,
-        iteration=iteration,
-        allowed_tool_names=frozenset(
-            str((schema.get("function") or {}).get("name") or "")
-            for schema in state.schemas
-            if isinstance(schema, dict)
-        ),
-    )
+    try:
+        calls, arguments_by_call_id = validate_native_call_batch(
+            raw_calls,
+            iteration=iteration,
+            allowed_tool_names=frozenset(
+                str((schema.get("function") or {}).get("name") or "")
+                for schema in state.schemas
+                if isinstance(schema, dict)
+            ),
+        )
+    except NativeToolBatchNotOpen as error:
+        await reject_creation_native_batch(state, bindings, error, result, iteration)
+        return True
     if not calls:
         if requires_category_selection:
             raise LLMError(

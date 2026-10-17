@@ -88,6 +88,9 @@ def check_and_run_tasks() -> None:
     db = SessionLocal()
     try:
         now = datetime.utcnow()
+        from app.services.recycle_bin import purge_expired
+        purge_expired(db, now=now)
+        commit_session(db)
 
         # Find tasks that are due
         due_tasks = (

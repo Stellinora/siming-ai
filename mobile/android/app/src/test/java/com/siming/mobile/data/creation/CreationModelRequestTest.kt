@@ -37,7 +37,8 @@ class CreationModelRequestTest {
             val generation = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
             val repair = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
             assertEquals(JsonPrimitive(true), generation["stream"])
-            assertEquals("disabled", generation.getValue("thinking").jsonObject.getValue("type").jsonPrimitive.content)
+            assertFalse("thinking" in generation)
+            assertFalse("thinking" in repair)
             val prompt = repair.getValue("messages").jsonArray.last().jsonObject.getValue("content").jsonPrimitive.content
             assertTrue("protagonist_seed" in prompt && "opening_hook" in prompt && "数组" in prompt)
             assertEquals(2, server.requestCount)
@@ -57,7 +58,7 @@ class CreationModelRequestTest {
         }
     }
 
-    @Test fun responsesUsesItsOwnNonThinkingParameterAndConfiguredStageBudget() = runBlocking {
+    @Test fun responsesProxyKeepsItsDefaultsAndConfiguredStageBudget() = runBlocking {
         MockWebServer().use { server ->
             val response = buildJsonObject {
                 put("type", "response.completed")
@@ -76,7 +77,7 @@ class CreationModelRequestTest {
                 protocol = DirectApiConfig.PROTOCOL_RESPONSES, maxOutputTokens = 12_000)
             assertEquals("{\"data\":{}}", contract.modelRequest.execute(DirectApiClient(allowCleartextForTests = true, retryDelaysMillis = emptyList()), config, "opening_outline", "system", "user"))
             val request = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
-            assertEquals("none", request.getValue("reasoning").jsonObject.getValue("effort").jsonPrimitive.content)
+            assertFalse("reasoning" in request)
             assertFalse("thinking" in request)
             assertEquals(12_000, request.getValue("max_output_tokens").jsonPrimitive.int)
         }

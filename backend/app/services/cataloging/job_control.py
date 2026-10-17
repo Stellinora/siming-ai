@@ -440,12 +440,29 @@ def set_job_execution_mode(db: Session, job: CatalogingJob, mode: str) -> bool:
     return should_resume
 
 
+def lock_review_control(db: Session, job: CatalogingJob, run: CatalogingChapterRun) -> None:
+    """Acquire the write boundary only while this job accepts review controls."""
+    if run.job_id != job.id or run.status not in {"failed", "awaiting_confirmation"}:
+        raise ValueError("当前章节不接受此审核操作")
+    count = db.query(CatalogingJob).filter(
+        CatalogingJob.id == job.id,
+        CatalogingJob.status.in_(["paused_on_failure", "waiting_confirmation"]),
+    ).update({"updated_at": datetime.utcnow()}, synchronize_session="fetch")
+    if count != 1:
+        raise ValueError("任务已结束或状态已变化，请刷新后操作")
+    db.refresh(run)
+    if run.status not in {"failed", "awaiting_confirmation"}:
+        raise ValueError("章节状态已变化，请刷新后操作")
+
+
 def mark_run_skipped(db: Session, job: CatalogingJob, run: CatalogingChapterRun) -> None:
+    lock_review_control(db, job, run)
     run.status = "skipped_by_user"
     run.completed_at = datetime.utcnow()
     run.error = None
     run.review_warning = None
     job.status = "running"
+    job.completed_at = None
     job.blocked_chapter_id = None
     job.context_integrity = "skipped_chapter"
     job.error = None

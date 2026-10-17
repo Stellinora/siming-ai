@@ -60,6 +60,10 @@ import com.siming.mobile.security.SecureApiConfigStore
 import com.siming.mobile.security.SecureTokenStore
 import com.siming.mobile.security.StoredTokenPair
 import com.siming.mobile.security.VerifiedPairing
+import com.siming.mobile.data.authoring.LocalRecycleStore
+import com.siming.mobile.data.authoring.MobileRecycleFiles
+import com.siming.mobile.data.local.RecycleEntry
+import com.siming.mobile.data.local.RecycleSnapshot
 import java.io.IOException
 import java.io.File
 import java.security.MessageDigest
@@ -114,6 +118,8 @@ class SimingRepository(
     private val appContext = context.applicationContext
     private val dao = database.dao()
     private val authoring = LocalAuthoringStore(database)
+    private val recycler = LocalRecycleStore(database)
+    private val recycleFiles = MobileRecycleFiles(appContext.filesDir)
     private val tokenStore = SecureTokenStore(appContext)
     private val directApiStore = SecureApiConfigStore(appContext)
     private val api = GatewayApi(tokenStore)
@@ -150,6 +156,7 @@ class SimingRepository(
 
     val connection: Flow<GatewayConnection?> = dao.observeConnection()
     val projects: Flow<List<ProjectSyncRecord>> = dao.observeProjects()
+    val recycleEntries: Flow<List<com.siming.mobile.data.local.RecycleEntrySummary>> = dao.observeRecycleEntries()
     val creationDrafts: Flow<List<ReplicaEntity>> = dao.observeCreationDrafts()
     val pendingCount: Flow<Int> = dao.observePendingCount()
     val cursor: Flow<SyncCursor?> = dao.observeCursor()
@@ -597,25 +604,96 @@ class SimingRepository(
 
     suspend fun deleteProject(projectId: String): ProjectDeletionResult = canonicalCommandMutex.withLock {
         syncMutex.withLock delete@{
-            if (dao.projectSyncRecord(projectId) == null) return@delete ProjectDeletionResult.ALREADY_ABSENT
+            cleanupRecycleBinLocked()
+            val project = dao.projectSyncRecord(projectId)?.project ?: return@delete ProjectDeletionResult.ALREADY_ABSENT
+            requireProjectInactive(projectId)
             database.withTransaction {
+                recycler.capture(projectId = projectId, type = "local_project", entityId = projectId,
+                    title = project.payloadJson?.let { json.parseToJsonElement(it) as? JsonObject }?.string("title").orEmpty(),
+                    snapshot = RecycleSnapshot(kind = "project", syncable = false,
+                        before = dao.allProjectReplicas(projectId), mutations = dao.projectMutations(projectId),
+                        conflicts = dao.projectConflicts(projectId), projectPackage = dao.projectPackage(projectId),
+                        beforeRuns = dao.catalogingRuns(projectId), files = recycleFiles.snapshot(projectId)))
                 dao.excludeProject(com.siming.mobile.data.local.ExcludedProject(projectId))
-                purgeLocalProject(projectId)
+                dao.deleteProjectMutations(projectId)
+                dao.deleteProjectConflicts(projectId)
+                dao.deleteProjectReplica(projectId)
+                dao.deleteProjectPackage(projectId)
+                dao.deleteProjectCatalogingRuns(projectId)
             }
             ProjectDeletionResult.LOCAL_ONLY
         }
     }
 
-    private suspend fun purgeLocalProject(projectId: String) {
-        val storedPackage = dao.projectPackage(projectId)
-        database.withTransaction {
-            dao.deleteProjectMutations(projectId)
-            dao.deleteProjectConflicts(projectId)
-            dao.deleteProjectReplica(projectId)
-            dao.deleteProjectPackage(projectId)
-            dao.deleteProjectCatalogingRuns(projectId)
+    private suspend fun requireProjectInactive(projectId: String) {
+        require(projectId !in activeAuthoringProjects) { "作品正在生成，请先取消任务再删除或恢复" }
+        recycler.requireInactive(projectId)
+    }
+
+    suspend fun cleanupRecycleBin() = canonicalCommandMutex.withLock {
+        syncMutex.withLock { cleanupRecycleBinLocked() }
+    }
+
+    private suspend fun cleanupRecycleBinLocked() {
+        dao.recycleEntries().filter { it.isExpired(System.currentTimeMillis()) }.forEach { purgeRecycleEntryLocked(it, sync = false) }
+    }
+
+    private suspend fun purgeRecycleEntryLocked(entry: RecycleEntry, sync: Boolean = true) {
+        val snapshot = entry.snapshot()
+        if (entry.state == "deleted") {
+            if (snapshot.kind == "files") recycleFiles.purgeDiscarded(snapshot.files)
+            else if (snapshot.kind != "project" || dao.projectSyncRecord(entry.projectId) == null) recycleFiles.purgeUnchanged(snapshot.files)
         }
-        storedPackage?.localFilePath?.let(::File)?.delete()
+        snapshot.projectPackage?.let { retained ->
+            // A newer import may reuse the project ID; never remove its active archive.
+            if (dao.projectPackage(entry.projectId)?.localFilePath != retained.localFilePath) {
+                val file = File(retained.localFilePath).canonicalFile
+                require(file.toPath().startsWith(appContext.filesDir.canonicalFile.toPath())) { "无效的导入包回收路径" }
+                if (file.exists()) check(file.delete()) { "无法清理回收的导入包" }
+            }
+        }
+        recycler.purge(entry.id, sync)
+    }
+
+    suspend fun permanentlyDeleteRecycleEntry(id: String) = canonicalCommandMutex.withLock {
+        syncMutex.withLock {
+            dao.recycleEntry(id)?.let { purgeRecycleEntryLocked(it) }
+            scheduleSync()
+        }
+    }
+
+    suspend fun restoreRecycleEntry(id: String): String = canonicalCommandMutex.withLock {
+        syncMutex.withLock {
+            cleanupRecycleBinLocked()
+            val entry = requireNotNull(dao.recycleEntry(id)) { "回收项已过期或已永久删除" }
+            requireProjectInactive(entry.projectId)
+            val snapshot = entry.snapshot()
+            if (snapshot.kind == "files") {
+                require(dao.projectSyncRecord(entry.projectId) != null) { "请先恢复所属作品" }
+                if (entry.entityType == "chapter_draft") {
+                    val pending = mobileWorkspaceAgent.pendingChapterDraft(entry.projectId)
+                    require(pending == null || pending.string("draft_id") == entry.entityId) { "已有待处理章节草稿，请先保存或丢弃后恢复" }
+                }
+                snapshot.files.values.forEach { mobileWorkspaceAgent.restoreRecycledDraft(entry.entityType, json.parseToJsonElement(it) as JsonObject) }
+                dao.deleteRecycleEntry(id)
+            } else {
+                recycleFiles.restoreMissing(snapshot.files)
+                recycler.restore(id)
+            }
+            scheduleSync()
+            entry.projectId
+        }
+    }
+
+    private suspend fun recycleFileDraft(projectId: String, type: String, id: String, title: String, discard: suspend () -> Unit) {
+        requireProjectInactive(projectId)
+        cleanupRecycleBinLocked()
+        val files = recycleFiles.draft(projectId, type, id)
+        require(files.isNotEmpty()) { "草稿不存在或已处理" }
+        // Commit the recovery copy before touching its file: process death cannot lose the author's draft.
+        recycler.capture(projectId = projectId, type = type, entityId = id, title = title,
+            snapshot = RecycleSnapshot(kind = "files", syncable = false, files = files))
+        discard() // Keep the recovery copy even if cancellation happens after the file was committed.
     }
 
     suspend fun deleteEntity(projectId: String, entityType: String, entityId: String) {
@@ -626,9 +704,13 @@ class SimingRepository(
         deleteOfflineEntity(projectId, entityType, entityId)
     }
 
-    private suspend fun deleteOfflineEntity(projectId: String, entityType: String, entityId: String) {
-        authoring.delete(projectId, entityType, entityId)
-        if (dao.connection() != null) SyncScheduler.enqueue(appContext)
+    private suspend fun deleteOfflineEntity(projectId: String, entityType: String, entityId: String) = canonicalCommandMutex.withLock {
+        syncMutex.withLock {
+            requireProjectInactive(projectId)
+            cleanupRecycleBinLocked()
+            authoring.delete(projectId, entityType, entityId)
+            scheduleSync()
+        }
     }
 
     private fun validateEntitySize(payload: JsonObject) {
@@ -714,7 +796,7 @@ suspend fun runCataloging(
     }
     val config = resolvedDirectConfig("cataloging")
     val contract = CatalogingContract(appContext)
-    return MobileCataloging(database, contract, config.model) { messages, tools, activity ->
+    return MobileCataloging(database, contract, config, directApi) { messages, tools, activity ->
         contract.modelRequest.execute(directApi, config, messages, tools, activity)
     }.run(projectId, chapters.map { it.entityId }, onProgress)
 }
@@ -1263,6 +1345,18 @@ suspend fun exportProjectPackage(projectId: String, profile: String): MobileExpo
     }
 
     suspend fun runAssistant(
+        projectId: String, prompt: String, modelRoute: AssistantModelRoute, conversationId: String? = null,
+        onEvent: suspend (String) -> Unit,
+    ): AssistantRoute {
+        canonicalCommandMutex.withLock {
+            require(dao.projectSyncRecord(projectId) != null) { "作品不存在或已删除" }
+            check(activeAuthoringProjects.add(projectId)) { "作品已有正在执行的生成任务" }
+        }
+        try { return runAssistantInternal(projectId, prompt, modelRoute, conversationId, onEvent) }
+        finally { activeAuthoringProjects.remove(projectId) }
+    }
+
+    private suspend fun runAssistantInternal(
         projectId: String,
         prompt: String,
         modelRoute: AssistantModelRoute,
@@ -1395,7 +1489,7 @@ suspend fun exportProjectPackage(projectId: String, profile: String): MobileExpo
                             failedSnapshot?.let { snapshot ->
                                 mobileConversationContextStatePayload(
                                     status = "failed",
-                                    detail = "会话上下文校验失败；本轮未执行未确认的业务工具",
+                                    detail = error.userFacingDetail,
                                     conversation = snapshot,
                                     checkpointId = snapshot.checkpoints.lastOrNull()?.id,
                                     provider = "android_direct_api",
@@ -1406,7 +1500,7 @@ suspend fun exportProjectPackage(projectId: String, profile: String): MobileExpo
                                 )
                             } ?: buildJsonObject {
                                 put("status", "failed")
-                                put("detail", "会话上下文校验失败；本轮未执行未确认的业务工具")
+                                put("detail", error.userFacingDetail)
                                 put("error_code", error.code)
                                 put("error_detail", error.message)
                                 put("conversation_id", turnContext.conversationId)
@@ -1574,8 +1668,10 @@ suspend fun exportProjectPackage(projectId: String, profile: String): MobileExpo
             ?: error("大纲草稿返回结构无效")
     }
 
-    suspend fun discardPendingOutlineDraft(draft: MobilePendingOutlineDraft) {
-        mobileWorkspaceAgent.discardOutlineDraft(draft.draftId) ?: error("大纲草稿不存在")
+    suspend fun discardPendingOutlineDraft(draft: MobilePendingOutlineDraft) = canonicalCommandMutex.withLock {
+        recycleFileDraft(draft.projectId, "outline_draft", draft.draftId, "大纲草稿") {
+            mobileWorkspaceAgent.discardOutlineDraft(draft.draftId) ?: error("大纲草稿不存在")
+        }
     }
 
     suspend fun regeneratePendingOutlineDraft(draft: MobilePendingOutlineDraft): String {
@@ -1827,11 +1923,11 @@ suspend fun exportProjectPackage(projectId: String, profile: String): MobileExpo
         return@withLock chapterId
     }
 
-    suspend fun discardPendingChapterDraft(draft: MobilePendingChapterDraft) {
+    suspend fun discardPendingChapterDraft(draft: MobilePendingChapterDraft) = canonicalCommandMutex.withLock {
         when (draft.executionRoute) {
-            "android_standalone" -> require(
-                mobileWorkspaceAgent.discardChapterDraft(draft.draftId),
-            ) { "手机章节草稿不存在或已处理" }
+            "android_standalone" -> recycleFileDraft(draft.projectId, "chapter_draft", draft.draftId, draft.title) {
+                require(mobileWorkspaceAgent.discardChapterDraft(draft.draftId)) { "手机章节草稿不存在或已处理" }
+            }
             else -> {
                 ensureLocalDraft(draft)
                 authoring.closeReplicaDraft(draft.projectId, draft.draftId, "discarded")
@@ -2311,7 +2407,7 @@ suspend fun exportProjectPackage(projectId: String, profile: String): MobileExpo
                     }.getOrNull()?.let { snapshot ->
                         mobileConversationContextStatePayload(
                             status = "failed",
-                            detail = "立项上下文校验失败；未执行未确认的业务工具",
+                            detail = error.userFacingDetail,
                             conversation = snapshot,
                             checkpointId = snapshot.checkpoints.lastOrNull()?.id,
                             provider = "android_direct_api",
@@ -2326,7 +2422,7 @@ suspend fun exportProjectPackage(projectId: String, profile: String): MobileExpo
                 }
                 emitProgress(CreationAgentProgressEvent(
                     type = "conversation_context",
-                    message = "立项上下文校验失败；未执行未确认的业务工具",
+                    message = error.userFacingDetail,
                     status = "failed",
                     data = failedContext ?: buildJsonObject {
                         put("status", "failed")
@@ -3038,6 +3134,7 @@ suspend fun exportProjectPackage(projectId: String, profile: String): MobileExpo
             "superseded",
         )
         private val GOVERNANCE_ENTITY_TYPES = setOf("foreshadowing", "governance")
+        private val activeAuthoringProjects = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
         private val syncMutex = Mutex()
         private val canonicalCommandMutex = Mutex()
         private val draftSaveMutex = Mutex()

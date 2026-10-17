@@ -19,9 +19,12 @@ def patch_creation_entity(session: Any, entity: Any, changes: list[dict[str, Any
 
 
 def delete_creation_entity(session: Any, entity: Any, **kwargs: Any) -> dict[str, Any]:
-    return _delete_creation_entity(
-        session, entity, patcher=patch_creation_artifact, validator=_validate_stage, **kwargs,
-    )
+    from sqlalchemy.orm import object_session
+    from app.services.recycle_bin import capture_deletion
+    with capture_deletion(object_session(session), entity):
+        return _delete_creation_entity(
+            session, entity, patcher=patch_creation_artifact, validator=_validate_stage, **kwargs,
+        )
 
 
 def restore_artifact_version(session: Any, version: Any, **kwargs: Any) -> dict[str, Any]:

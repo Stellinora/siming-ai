@@ -116,3 +116,5 @@
     min-width: 44px;
   }
 }
+.gui-page-navigation { padding: 10px 8px 0; }
+.gui-page-navigation .page-navigation-trigger { width: 100%; }

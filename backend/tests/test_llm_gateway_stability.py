@@ -80,6 +80,7 @@ class GatewayStabilityTestCase(unittest.TestCase):
                 provider="gemini",
                 api_key_encrypted=encrypt("test-key"),
                 default_model="gemini-2.5-flash",
+                base_url_override="https://generativelanguage.googleapis.com/v1beta/openai/",
                 is_global_default=True,
                 readiness_status="ready",
                 readiness_json='{"source":"test"}',

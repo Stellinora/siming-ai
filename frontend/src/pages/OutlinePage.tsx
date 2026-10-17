@@ -270,6 +270,7 @@ function OutlinePage({ projectId }: OutlinePageProps) {
   const formRevisionRef = useRef(0)
   const saveRequestGate = useRef(createLatestRequestGate<string>())
   const skipNextFormLoadRef = useRef<string | null>(null)
+  const loadedNodeRef = useRef<string | null>(null)
   const {
     refreshKey,
     generatedOutlineDraft,
@@ -282,6 +283,7 @@ function OutlinePage({ projectId }: OutlinePageProps) {
   const reviewingDraft = Boolean(pendingOutlineDraft && !editingFormal)
   const {
     saveStatus,
+    hasUnsavedChanges,
     saveError,
     markDirty,
     markSaved,
@@ -380,6 +382,9 @@ function OutlinePage({ projectId }: OutlinePageProps) {
 
   useEffect(() => {
     if (!creating && selectedNode) {
+      const nodeKey = `${projectId}:${selectedNode.id}`
+      if (loadedNodeRef.current === nodeKey && hasUnsavedChanges()) return
+      loadedNodeRef.current = nodeKey
       if (skipNextFormLoadRef.current === selectedNode.id) {
         skipNextFormLoadRef.current = null
         return
@@ -399,7 +404,7 @@ function OutlinePage({ projectId }: OutlinePageProps) {
       if (skipNextFormLoadRef.current) return
       form.resetFields()
     }
-  }, [creating, form, selectedNode])
+  }, [creating, form, hasUnsavedChanges, projectId, selectedNode])
 
   const visibleExpandedKeys = useMemo(() => {
     const keys = filterActive ? collectTreeKeys(filteredTree) : expandedKeys
@@ -598,7 +603,7 @@ function OutlinePage({ projectId }: OutlinePageProps) {
     if (!selectedId) return
     try {
       await apiClient.delete(`/projects/${projectId}/outline/${selectedId}`)
-      message.success('大纲节点已删除')
+      message.success('大纲节点已移至回收站，7 天内可恢复')
       saveRequestGate.current.invalidate()
       selectedIdRef.current = null
       creatingRef.current = false
@@ -835,7 +840,7 @@ function OutlinePage({ projectId }: OutlinePageProps) {
               {!creating && selectedId && (
                 <Popconfirm
                   title="删除大纲节点"
-                  description="子节点和关联角色记录也会一并删除。"
+                  description="子节点和关联角色记录将一并移至回收站，7 天内可恢复。"
                   okText="删除"
                   cancelText="取消"
                   okButtonProps={{ danger: true, autoInsertSpace: false }}

@@ -89,7 +89,7 @@ export default function ContextGovernanceSettingsPanel() {
         <Text type="secondary" style={{ fontSize: 12 }}>{semantic?.model || 'multilingual-e5-small'}{semantic?.reason ? ` · ${semantic.reason}` : ''}</Text>
       </div>
       <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
-        未配置精确档案时，远程未知模型按 256K 临时容量运行。若保存并启用服务商公布的实际窗口和最大输出，司命会优先使用该档案。
+        未配置精确档案时，远程未知模型按 128K 临时容量运行。若保存并启用服务商公布的实际窗口和最大输出，司命会优先使用该档案。
       </Text>
       <Table
         rowKey="id"

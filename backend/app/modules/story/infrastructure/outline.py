@@ -154,7 +154,8 @@ class SqlAlchemyOutlineWorkspace:
     def delete(self, project_id: str, node_id: str) -> StoryMutation:
         get_project_or_404(self._session, project_id)
         node = self._node(project_id, node_id)
-        self._session.delete(node)
+        from app.services.recycle_bin import delete_to_recycle
+        delete_to_recycle(self._session, node)
         self._session.flush()
         return StoryMutation(
             sync_intents=[

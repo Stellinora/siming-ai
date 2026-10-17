@@ -1641,7 +1641,7 @@ function SettingsPage({ embedded = false }: SettingsPageProps = {}) {
               ? '已按服务商公开规格或模型接口自动验证；模型切换时会同步更新。'
               : contextProfileSource === 'configured'
                 ? '这是你已确认并保存的容量档案，可按当前模型文档修改。'
-                : '可留空；司命会按 256,000 tokens 临时兜底。若知道服务商的实际窗口，可填写并优先使用该档案。'}
+                : '可留空；司命会按 128,000 tokens 临时兜底。若知道服务商的实际窗口，可填写并优先使用该档案。'}
             rules={[
               ({ getFieldValue }) => ({
                 validator: async (_, value) => {

@@ -60,6 +60,7 @@ class BaseAdapter(ABC):
         """Streaming chat completion — yields text token chunks only.
 
         This method is for text-only streaming. It does NOT surface tool calls.
+        Empty strings signal transport activity (e.g. reasoning) without prose.
         When tools are needed, use stream_chat_completion_with_tools() instead.
         """
         ...

@@ -73,15 +73,18 @@ def _get_candidate_or_404(db: Session, project_id: str, candidate_id: str):
 @router.post("/projects/{project_id}/cataloging/start")
 async def start_cataloging(project_id: str, payload: CatalogingStartRequest, db: Session = Depends(get_db)):
     get_project_or_404(db, project_id)
-    _job, launch = create_and_queue_cataloging_job(
-        db,
-        project_id,
-        payload.chapter_ids,
-        execution_mode=payload.execution_mode,
-        model_override=payload.model,
-        trigger_source="manual",
-        run_now=True,
-    )
+    try:
+        _job, launch = create_and_queue_cataloging_job(
+            db,
+            project_id,
+            payload.chapter_ids,
+            execution_mode=payload.execution_mode,
+            model_override=payload.model,
+            trigger_source="manual",
+            run_now=True,
+        )
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
     if launch.get("next_action") == "already_cataloged":
         message = "当前章节版本已完成建档，已复用现有结果"
     elif launch.get("idempotent_reuse"):
@@ -230,15 +233,11 @@ def update_cataloging_candidate(
 ):
     get_project_or_404(db, project_id)
     candidate = _get_candidate_or_404(db, project_id, candidate_id)
-    if candidate.status in {"applying", "applied"}:
-        raise ValidationError("候选项正在写入或已写入，不能修改")
-    if payload.payload is not None:
-        candidate.edited_payload = json.dumps(payload.payload, ensure_ascii=False)
-        if payload.status is None and candidate.status == "pending":
-            candidate.status = "edited"
-    if payload.status is not None:
-        candidate.status = payload.status
-    candidate.updated_at = datetime.utcnow()
+    from ..services.cataloging.candidate_review import update_candidate_review
+    try:
+        update_candidate_review(db, candidate, payload.payload, payload.status)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
     commit_session(db)
     db.refresh(candidate)
     return ApiResponse.success(data=candidate_to_dict(candidate), message="候选项已更新")
@@ -291,11 +290,13 @@ def bulk_update_cataloging_candidates(
         job.id,
         candidate_ids=payload.candidate_ids,
     )
-    for candidate in candidates:
-        if candidate.status in {"applying", "applied"}:
-            continue
-        candidate.status = payload.status
-        candidate.updated_at = datetime.utcnow()
+    from ..services.cataloging.candidate_review import update_candidate_review
+    try:
+        with db.begin_nested():
+            for candidate in candidates:
+                update_candidate_review(db, candidate, status=payload.status)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
     commit_session(db)
     return ApiResponse.success(
         data={"items": [candidate_to_dict(item) for item in candidates], "total": len(candidates)},
@@ -335,7 +336,10 @@ async def skip_current_cataloging_chapter(project_id: str, job_id: str, db: Sess
     run = first_blocking_run(db, job)
     if not run:
         raise ValidationError("当前没有可跳过的章节")
-    mark_run_skipped(db, job, run)
+    try:
+        mark_run_skipped(db, job, run)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
     commit_session(db)
     queue_managed_cataloging_job(job)
     return ApiResponse.success(data={"job": job_to_dict(job), "run": run_to_dict(run)}, message="当前章节已显式跳过")
@@ -403,7 +407,10 @@ def recover_current_cataloging_chapter(project_id: str, job_id: str, db: Session
     except ValueError as exc:
         raise ValidationError(str(exc)) from exc
     coverage = candidate_coverage_for_run(db, run)
-    recover_failed_run_for_review(db, job, run)
+    try:
+        recover_failed_run_for_review(db, job, run)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
     commit_session(db)
     message = "当前完整计划已转入人工确认"
     return ApiResponse.success(

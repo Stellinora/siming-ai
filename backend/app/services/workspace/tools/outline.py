@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
+from ....core.exceptions import ValidationError
 
 from ....database.models import OutlineNode, Project
 from ....modules.story.application.content_sync import queue_content_sync
@@ -13,7 +14,6 @@ from ...outline_service import replace_character_links
 from ..utils import (
     find_outline_by_title_or_id,
     next_outline_sort_order,
-    outline_links_from_names,
     outline_node_payload,
 )
 
@@ -38,12 +38,14 @@ async def update_outline_node(
     if not node:
         return {"tool": "update_outline_node", "status": "skipped", "detail": "未找到当前作品内的大纲节点"}
     character_links = None
-    if "character_names" in args:
-        character_links = outline_links_from_names(
-            db,
-            project_id,
-            args.get("character_names"),
-        )
+    if "character_ids" in args:
+        ids = args["character_ids"]
+        if not isinstance(ids, list) or any(not isinstance(item, str) or not item for item in ids):
+            raise ValidationError("角色 ID 必须是字符串数组")
+        if len(set(ids)) != len(ids):
+            raise ValidationError("大纲角色关联不能重复")
+        character_links = [(character_id, None) for character_id in ids]
+    replace_character_links(db, project_id, node, character_links)
     if args.get("title"):
         node.title = str(args.get("title")).strip()[:200]
     if "summary" in args:
@@ -52,7 +54,6 @@ async def update_outline_node(
         node.status = str(args.get("status"))
     if args.get("node_type") in {"volume", "chapter", "section"}:
         node.node_type = str(args.get("node_type"))
-    replace_character_links(db, project_id, node, character_links)
     if "source_chapter_id" in args:
         node.source_chapter_id = str(args.get("source_chapter_id") or "")[:36] or None
     if "actual_summary" in args:
@@ -109,15 +110,8 @@ async def delete_outline_node(
     if not node:
         return {"tool": "delete_outline_node", "status": "skipped", "detail": "未找到大纲节点"}
     title = node.title
-    # Cascade-delete children
-    children = (
-        db.query(OutlineNode)
-        .filter(OutlineNode.project_id == project_id, OutlineNode.parent_id == node.id)
-        .all()
-    )
-    for child in children:
-        db.delete(child)
-    db.delete(node)
+    from app.services.recycle_bin import delete_to_recycle
+    delete_to_recycle(db, node)
     project = db.query(Project).filter(Project.id == project_id).first()
     if project:
         db.flush()

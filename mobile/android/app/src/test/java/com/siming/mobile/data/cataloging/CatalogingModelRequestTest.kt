@@ -8,6 +8,11 @@ import kotlin.test.*
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 
@@ -133,8 +138,10 @@ class CatalogingModelRequestTest {
                     .setBody("data: $event\n\ndata: [DONE]\n\n").setHeadersDelay(300, TimeUnit.MILLISECONDS))
                 server.start()
                 val client = DirectApiClient(OkHttpClient.Builder().proxy(Proxy.NO_PROXY).readTimeout(120, TimeUnit.MILLISECONDS)
-                    .callTimeout(150, TimeUnit.MILLISECONDS).build(), allowCleartextForTests = true)
-                val config = DirectApiConfig("DeepSeek", server.url("/").newBuilder().host("127.0.0.1").build().toString().trimEnd('/'), "fixture-key",
+                    .callTimeout(150, TimeUnit.MILLISECONDS).addInterceptor { chain ->
+                        chain.proceed(chain.request().newBuilder().url(server.url(chain.request().url.encodedPath)).build())
+                    }.build(), allowCleartextForTests = true)
+                val config = DirectApiConfig("renamed-api", "https://api.deepseek.com", "fixture-key",
                     "deepseek-flash", protocol, maxOutputTokens = 5_000)
                 val result = contract.modelRequest.execute(client, config,
                     listOf(buildJsonObject { put("role", "user"); put("content", "catalog saved chapter") }), contract.schemas) {}
@@ -155,5 +162,49 @@ class CatalogingModelRequestTest {
                 assertEquals(300, contract.modelRequest.idleTimeoutSeconds)
             }
         }
+    }
+
+    @Test fun `standalone SiliconFlow cataloging uses host policy for both Qwen and DeepSeek`() = runBlocking {
+        listOf("Qwen/Qwen3.8-27B", "deepseek-ai/DeepSeek-V3.2").forEach { model ->
+            var payload: JsonObject? = null
+            val http = OkHttpClient.Builder().addInterceptor { chain ->
+                val request = chain.request()
+                val buffer = Buffer()
+                request.body!!.writeTo(buffer)
+                payload = Json.parseToJsonElement(buffer.readUtf8()).jsonObject
+                val event = """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"get_next_external_cataloging_chapter","arguments":"{\"job_id\":\"test-job\"}"}}]},"finish_reason":"tool_calls"}]}"""
+                Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                    .body("data: $event\n\ndata: [DONE]\n\n".toResponseBody("text/event-stream".toMediaType()))
+                    .build()
+            }.build()
+            val config = DirectApiConfig("guiji", "https://api.siliconflow.cn/v1", "fixture-key",
+                model, DirectApiConfig.PROTOCOL_CHAT_COMPLETIONS)
+            val result = contract.modelRequest.execute(DirectApiClient(http), config,
+                listOf(buildJsonObject { put("role", "user"); put("content", "catalog saved chapter") }), contract.schemas) {}
+            assertEquals("get_next_external_cataloging_chapter", result.toolCalls.single().name)
+            val sent = requireNotNull(payload)
+            assertEquals(false, sent.getValue("enable_thinking").jsonPrimitive.boolean)
+            assertFalse("thinking" in sent)
+            assertFalse("reasoning" in sent)
+            assertEquals(contract.names, sent.objects("tools").map { it.obj("function").text("name") }.toSet())
+        }
+    }
+
+    @Test fun `cataloging refuses oversized actual payload before any HTTP request`() = runBlocking {
+        var requests = 0
+        val client = DirectApiClient(OkHttpClient.Builder().addInterceptor {
+            requests++
+            error("oversized request must never reach HTTP")
+        }.build())
+        val config = DirectApiConfig("local", "https://example.test/v1", "fixture-key", "local-model",
+            DirectApiConfig.PROTOCOL_CHAT_COMPLETIONS, contextWindowTokens = 64_000)
+        val messages = listOf(buildJsonObject { put("role", "user"); put("content", "完整资料".repeat(10_000)) })
+        val budget = contract.modelRequest.budget(client, config, messages, contract.schemasForPlan(false))
+        assertFalse(budget.fitsCurrent)
+        assertEquals(64_000 - 6_000 - 4_096, budget.requestInputLimit)
+        assertFailsWith<com.siming.mobile.data.agent.MobileConversationContextException> {
+            contract.modelRequest.execute(client, config, messages, contract.schemasForPlan(false)) {}
+        }
+        assertEquals(0, requests)
     }
 }

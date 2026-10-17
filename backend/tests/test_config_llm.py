@@ -1469,6 +1469,7 @@ class TestLLMGatewayChatCompletion(unittest.TestCase):
         mock_client = MagicMock()
         mock_completion = MagicMock()
         mock_choice = MagicMock()
+        mock_choice.finish_reason = "stop"
         mock_choice.message.content = "你好，这是测试回复。"
         mock_completion.choices = [mock_choice]
         mock_completion.model = "gpt-4o"
@@ -1507,6 +1508,7 @@ class TestLLMGatewayChatCompletion(unittest.TestCase):
         mock_client = MagicMock()
         mock_completion = MagicMock()
         mock_choice = MagicMock()
+        mock_choice.finish_reason = "stop"
         mock_choice.message.content = "使用默认模型回复。"
         mock_completion.choices = [mock_choice]
         mock_completion.model = "gpt-4o"
@@ -1582,6 +1584,7 @@ class TestLLMGatewayChatCompletion(unittest.TestCase):
         mock_client = MagicMock()
         mock_completion = MagicMock()
         mock_choice = MagicMock()
+        mock_choice.finish_reason = "stop"
         mock_choice.message.content = "custom provider reply"
         mock_choice.message.tool_calls = None
         mock_completion.choices = [mock_choice]
@@ -1603,6 +1606,7 @@ class TestLLMGatewayChatCompletion(unittest.TestCase):
         self.assertNotIn("max_tokens", called_kwargs)
         mock_openai.assert_called_with(
             api_key="sk-openrouter",
+            max_retries=0,
             base_url="https://openrouter.example.test/v1",
             http_client=ANY,
         )
@@ -1965,6 +1969,7 @@ class TestConfigLLMIntegration(unittest.TestCase):
         mock_client = MagicMock()
         mock_completion = MagicMock()
         mock_choice = MagicMock()
+        mock_choice.finish_reason = "stop"
         mock_choice.message.content = "DeepSeek 回复"
         mock_completion.choices = [mock_choice]
         mock_completion.model = "deepseek-v4-flash"

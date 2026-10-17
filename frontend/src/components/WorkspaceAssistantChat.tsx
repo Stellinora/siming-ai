@@ -425,7 +425,7 @@ function WorkspaceAssistantChat({
     else openGeneratedDraft(discardedDraft)
     triggerRefresh()
     await Promise.resolve(onApplied?.())
-    message.success('章节草稿已丢弃；正式正文未改变')
+    message.success('章节草稿已移至回收站，7 天内可恢复；正式正文未改变')
   }, [
     generatedDraft,
     onApplied,
@@ -787,7 +787,7 @@ function WorkspaceAssistantChat({
     }
     Modal.confirm({
       title: '删除对话',
-      content: '确定要删除这条对话记录吗？删除后无法恢复。',
+      content: '这条对话记录将移至回收站，7 天内可恢复。',
       okText: '删除',
       cancelText: '取消',
       okButtonProps: { danger: true },
@@ -798,7 +798,7 @@ function WorkspaceAssistantChat({
           if (activeConversationId === conversationId) {
             startNewConversation()
           }
-          message.success('对话已删除')
+          message.success('对话已移至回收站，7 天内可恢复')
         } catch (err: any) {
           message.error(err.message || '删除对话失败')
         }
@@ -1602,7 +1602,7 @@ function WorkspaceAssistantChat({
       await apiClient.delete(`/projects/${projectId}/outline-drafts/${draft.draftId}`)
       updateGeneratedOutlineDraft({ status: 'discarded' })
       triggerRefresh()
-      message.success('大纲草稿已丢弃')
+      message.success('大纲草稿已移至回收站，7 天内可恢复')
       return
     }
     if (mode === 'regenerate') {

@@ -18,7 +18,7 @@ from .candidate_validation import (
     inspect_candidate_coverage,
 )
 from .constants import VALID_ITEM_TYPES
-from .job_control import complete_cataloging_job, refresh_job_progress
+from .job_control import complete_cataloging_job, refresh_job_progress, lock_review_control
 
 
 def create_manual_candidate(
@@ -191,11 +191,13 @@ def apply_pending_cataloging_run(
 
 
 def recover_failed_run_for_review(db: Session, job: CatalogingJob, run: CatalogingChapterRun) -> None:
+    lock_review_control(db, job, run)
     run.status = "awaiting_confirmation"
-    run.completed_at = run.completed_at or datetime.utcnow()
+    run.completed_at = None
     run.error = None
     run.review_warning = None
     job.status = "waiting_confirmation"
+    job.completed_at = None
     job.blocked_chapter_id = run.chapter_id
     job.error = None
     refresh_job_progress(db, job)

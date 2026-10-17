@@ -18,6 +18,7 @@ import com.siming.mobile.data.agent.mobileCanonicalJson
 import com.siming.mobile.data.agent.mobileConversationContextStatePayload
 import com.siming.mobile.data.agent.persistRejectedMobileNativeToolBatch
 import com.siming.mobile.data.agent.providerMessages
+import com.siming.mobile.data.agent.rejectMobileUnopenedToolBatch
 import com.siming.mobile.data.network.DirectAgentTurn
 import com.siming.mobile.data.network.DirectAgentToolCall
 import com.siming.mobile.data.network.DirectApiClient
@@ -127,6 +128,7 @@ internal class MobileCreationConversationAgent(
         var finalReply = ""
         var iteration = 0
         var consecutiveCapacityRejections = 0
+        var nativeToolNameRejections = 0
         var activeCategories = emptyList<String>()
         var categorySelected = false
         var successfulWriteCount = 0
@@ -282,13 +284,6 @@ internal class MobileCreationConversationAgent(
                     "立项原生工具调用 ID 为空或重复，整批未执行",
                 )
             }
-            val undeclared = calls.map(DirectAgentToolCall::name).filterNot(offeredToolNames::contains)
-            if (undeclared.isNotEmpty()) {
-                throw MobileConversationContextException(
-                    MobileConversationContextErrorCode.PROTOCOL_INVALID,
-                    "模型调用了本步骤未声明的立项工具，整批未执行：${undeclared.joinToString()}",
-                )
-            }
             val categoryCalls = calls.filter { it.name == contract.categoryController }
             if (categoryCalls.isNotEmpty() && calls.size != 1) {
                 throw MobileConversationContextException(
@@ -301,6 +296,39 @@ internal class MobileCreationConversationAgent(
                     MobileConversationContextErrorCode.PROTOCOL_INVALID,
                     "模型没有调用本步骤唯一开放的 set_tool_categories，整批未执行",
                 )
+            }
+            val nameRejection = rejectMobileUnopenedToolBatch(
+                assistantPayload = turn.assistantMessage,
+                orderedToolNames = calls.map(DirectAgentToolCall::name),
+                offeredToolNames = offeredToolNames,
+                requestBudget = prepared.budget,
+                rejectionCount = nativeToolNameRejections + 1,
+            )
+            if (nameRejection != null) {
+                nativeToolNameRejections += 1
+                val transaction = deliveredTransaction(turn, calls, nameRejection.results)
+                persistRejectedMobileNativeToolBatch(
+                    conversationStore = conversationStore,
+                    projectId = storageId,
+                    turnContext = turnContext,
+                    transaction = transaction,
+                    recoveryFits = nameRejection.recoveryFits,
+                    terminalError = nameRejection.failure,
+                ) { runtime ->
+                    deliveredTransactions.clear()
+                    deliveredTransactions += runtime.activeTransactions
+                    turnProtocolMessages += transaction.nativeMessages()
+                    toolResults += nameRejection.results
+                    onProgress(CreationAgentProgressEvent(
+                        type = "status",
+                        message = "模型调用了未开放的工具，本批次未执行，此前进度已保留；" +
+                            if (nameRejection.recoveryFits) "正在按当前工具清单修正（$nativeToolNameRejections/2）"
+                            else "自动修正已停止。",
+                        status = "warning",
+                    ))
+                }
+                iteration += 1
+                continue
             }
             var batchAdmission = MobileNativeToolBudgetContract.admitExactAssistantTransaction(
                 assistantPayload = turn.assistantMessage,
@@ -553,9 +581,6 @@ internal class MobileCreationConversationAgent(
                     contract.replyInstruction +
                     (if (replyDiagnostics.isNotEmpty()) contract.replyRepairInstruction else "") + "\n" +
                     "[/SERVER_RUNTIME_INSTRUCTION]"
-                val summaryExtraBody = if (config.isDeepSeekProvider()) buildJsonObject {
-                    put("thinking", buildJsonObject { put("type", "disabled") })
-                } else null
                 val prepared = conversationContextRuntime.prepare(
                     resultJsonBytes = { tool, _ -> creationDeclaredResultBytes(tool) },
                     storageId = storageId,
@@ -568,7 +593,6 @@ internal class MobileCreationConversationAgent(
                     taskType = DirectApiConfig.TASK_PLANNING,
                     maxOutputTokens = 1_200,
                     temperature = 0.2,
-                    extraBody = summaryExtraBody,
                     currentTurnLedger = executionLedger,
                     pendingTransactions = deliveredTransactions,
                 )
@@ -587,7 +611,6 @@ internal class MobileCreationConversationAgent(
                         tools = JsonArray(emptyList()),
                         maxOutputTokens = 1_200,
                         temperature = 0.2,
-                        extraBody = summaryExtraBody,
                     )
                 } catch (error: CancellationException) {
                     throw error

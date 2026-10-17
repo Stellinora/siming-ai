@@ -1,16 +1,18 @@
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Button, Space, Tooltip, Typography } from 'antd'
-import { BookOutlined, ExperimentOutlined, HomeOutlined, InfoCircleOutlined, PlusOutlined, RocketOutlined, RobotOutlined, SettingOutlined } from '@ant-design/icons'
+import { BookOutlined, DeleteOutlined, ExperimentOutlined, HomeOutlined, InfoCircleOutlined, PlusOutlined, RocketOutlined, RobotOutlined, SettingOutlined } from '@ant-design/icons'
 import ThemeSwitcher from '../themes/ThemeSwitcher'
 import { useGatewayRuntime } from './GatewayRuntimeContext'
 import AppVersion from './AppVersion'
 import { ContextInspectorButton } from '../shared/ui/ContextInspectorButton'
+import PageNavigation from './PageNavigation'
+import { confirmPageNavigation } from '../shared/pageNavigationGuard'
 
 const { Text } = Typography
 
 interface SystemNavProps {
   /** Highlight the current page */
-  current?: 'dashboard' | 'creation' | 'assistant' | 'getting-started' | 'settings' | 'external-agent' | 'models' | 'about'
+  current?: 'dashboard' | 'creation' | 'assistant' | 'getting-started' | 'settings' | 'external-agent' | 'models' | 'about' | 'recycle-bin'
 }
 
 /**
@@ -18,7 +20,8 @@ interface SystemNavProps {
  * Dashboard (作品管理). Settings and External Agent / MCP now live in the desktop GUI.
  */
 function SystemNav({ current }: SystemNavProps) {
-  const navigate = useNavigate()
+  const routerNavigate = useNavigate()
+  const navigate = (path: string) => confirmPageNavigation(() => routerNavigate(path))
   const location = useLocation()
   const { headless } = useGatewayRuntime()
   // Auto-detect current page if not specified
@@ -31,6 +34,7 @@ function SystemNav({ current }: SystemNavProps) {
     if (location.pathname === '/about') return 'about'
     if (location.pathname === '/external-agent') return 'external-agent'
     if (location.pathname === '/models') return 'models'
+    if (location.pathname === '/recycle-bin') return 'recycle-bin'
     return ''
   })()
 
@@ -66,6 +70,14 @@ function SystemNav({ current }: SystemNavProps) {
         ))}
       </Space>
       <div className="system-nav-tools">
+        <PageNavigation />
+        <Button
+          type="text"
+          icon={<DeleteOutlined />}
+          aria-current={active === 'recycle-bin' ? 'page' : undefined}
+          className={active === 'recycle-bin' ? 'system-nav-tool-active' : undefined}
+          onClick={() => navigate('/recycle-bin')}
+        >回收站</Button>
         <ContextInspectorButton label="调用记录" />
         <span id="global-operation-nav-slot" className="global-operation-nav-slot" />
         <Tooltip title="关于我们">

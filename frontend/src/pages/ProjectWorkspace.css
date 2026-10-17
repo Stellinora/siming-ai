@@ -183,3 +183,5 @@
     padding: 8px;
   }
 }
+.project-workspace-footer { border-top: 1px solid var(--ant-color-border-secondary); margin-top: 12px; padding: 8px; }
+.project-workspace-footer .ant-btn { width: 100%; text-align: left; }

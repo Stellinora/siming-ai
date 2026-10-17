@@ -180,6 +180,7 @@ fun SimingApp(
     var selectedProjectId by rememberSaveable { mutableStateOf<String?>(null) }
     var showDirectApiSetup by rememberSaveable { mutableStateOf(false) }
     var showAbout by rememberSaveable { mutableStateOf(false) }
+    var showRecycleBin by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(ui.notice, ui.error) {
         val message = ui.error ?: ui.notice ?: return@LaunchedEffect
@@ -204,6 +205,11 @@ fun SimingApp(
             onConfigured = { showDirectApiSetup = false },
             snackbar = snackbar,
         )
+        return
+    }
+
+    if (showRecycleBin) {
+        RecycleBinWorkspace(viewModel, { showRecycleBin = false }, snackbar)
         return
     }
 
@@ -288,6 +294,7 @@ fun SimingApp(
                 onPickText = onPickText,
                 onPickProjectPackage = onPickProjectPackage,
                 onStartAiCreation = { rootTab = RootTab.Create },
+                onOpenRecycleBin = { showRecycleBin = true },
             )
             RootTab.Sync -> MobileSyncWorkspace(
                 modifier = Modifier.padding(padding),
@@ -366,6 +373,7 @@ private fun LibraryScreen(
     onPickText: (((MobileNovelImportFile) -> Unit) -> Unit),
     onPickProjectPackage: (((MobileProjectPackageFile) -> Unit) -> Unit),
     onStartAiCreation: () -> Unit,
+    onOpenRecycleBin: () -> Unit,
 ) {
     var showCreate by rememberSaveable { mutableStateOf(false) }
     var showActions by rememberSaveable { mutableStateOf(false) }
@@ -390,6 +398,11 @@ private fun LibraryScreen(
                     Spacer(Modifier.width(4.dp))
                     Text("新建")
                 }
+            }
+        }
+        item {
+            OutlinedButton(onClick = onOpenRecycleBin, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("回收站 · 删除后保留 7 天")
             }
         }
         if (projects.isNotEmpty()) {
@@ -456,7 +469,7 @@ private fun LibraryScreen(
             title = { Text("删除《$title》？") },
             text = {
                 Text(
-                    "将从当前手机移除作品并取消待同步记录。其他设备上的副本保留，后续同步不会自动把作品重新下载。此操作不可撤销。",
+                    "将作品和待同步记录移入本机回收站，7 天内可恢复。其他设备上的作品保留；后续同步不会自动下载已移除的副本。",
                 )
             },
             confirmButton = {
@@ -486,6 +499,8 @@ private fun ProjectScreen(
     onConfigureDirectApi: () -> Unit,
 ) {
     var section by rememberSaveable(project.projectId) { mutableStateOf("chapter") }
+    var showPageDirectory by rememberSaveable { mutableStateOf(false) }
+    var showRecycleBin by rememberSaveable { mutableStateOf(false) }
     var editor by remember { mutableStateOf<EditorTarget?>(null) }
     var advanced by remember { mutableStateOf<EditorTarget?>(null) }
     var chapterEditor by remember { mutableStateOf<ReplicaEntity?>(null) }
@@ -518,6 +533,19 @@ private fun ProjectScreen(
         }
     }
     BackHandler(onBack = ::navigateBack)
+
+    if (showRecycleBin) {
+        RecycleBinWorkspace(viewModel, { showRecycleBin = false }, snackbar, project.projectId)
+        return
+    }
+    if (showPageDirectory) ProjectPageDirectory(onDismiss = { showPageDirectory = false }, onSelected = { destination ->
+        showPageDirectory = false
+        when (destination) {
+            "project" -> editor = EditorTarget("project", project)
+            "recycle" -> showRecycleBin = true
+            else -> section = destination
+        }
+    })
 
     val pendingChapterDraft = ui.pendingChapterDraft
         ?.takeIf { it.projectId == project.projectId }
@@ -667,9 +695,7 @@ if (editor != null) {
                         }
                     },
                     actions = {
-                        IconButton(onClick = { editor = EditorTarget("project", project) }) {
-                            Icon(Icons.Outlined.Edit, "编辑作品资料")
-                        }
+                        TextButton(onClick = { showPageDirectory = true }) { Text("全部页面") }
                     },
                 )
                 if (ui.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -1674,7 +1700,7 @@ private fun DirectApiSetupScreen(
                 if (documentedCapacity != null) {
                     "已按官方 API 端点和精确模型 ID 验证容量；切换模型时会同步更新。"
                 } else {
-                    "未取得官方或作者配置时，司命临时按未验证的 256K 上下文兜底，并使用 UTF-8 保守计数；服务商实际窗口更小时请填写档案。"
+                    "未取得官方或作者配置时，司命临时按未验证的 128K 上下文兜底，并使用 UTF-8 保守计数；服务商实际窗口更小时请填写档案。"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1688,13 +1714,13 @@ private fun DirectApiSetupScreen(
                     }
                 },
                 label = { Text("上下文窗口（tokens，可留空）") },
-                placeholder = { Text("留空则临时使用 256000") },
+                placeholder = { Text("留空则临时使用 128000") },
                 supportingText = {
                     Text(
                         if (documentedCapacity != null) {
                             "已由官方模型规格自动填写"
                         } else {
-                            "留空时使用未验证的 256K 兜底；填写后该模型档案优先"
+                            "留空时使用未验证的 128K 兜底；填写后该模型档案优先"
                         },
                     )
                 },

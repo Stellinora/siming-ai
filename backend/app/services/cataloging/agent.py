@@ -29,7 +29,7 @@ from ...modules.continuity.domain.candidate_contract import (
 from ...modules.model_runtime.application.execution import model_executor
 from ...prompts.cataloging_source import get_internal_cataloging_system_prompt
 from ..agent_tool_stream import collect_tool_turn
-from .constants import CATALOGING_MAX_TOKENS, CATALOGING_TEMPERATURE, CATALOGING_TIMEOUT_SECONDS
+from .constants import CATALOGING_TEMPERATURE, CATALOGING_TIMEOUT_SECONDS
 from .model_selection import cataloging_extra_body
 
 CATALOGING_AGENT_TOOLS = frozenset(
@@ -291,7 +291,7 @@ def _cataloging_messages(db: Session, job: CatalogingJob, run: CatalogingChapter
     return messages
 
 
-def _record_unopened_tool_batch(
+def _record_rejected_tool_batch(
     db: Session, run: CatalogingChapterRun, messages: list[dict],
     assistant: dict, error: Any,
 ) -> None:
@@ -313,6 +313,26 @@ def _record_unopened_tool_batch(
 
 
 
+def _cataloging_step_contract(
+    db: Session, run: CatalogingChapterRun, selected_type: str | None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    summary_required = _needs_chapter_summary(db, run)
+    if summary_required:
+        selected_type = None
+    selection_types, target_ids, scene_count, candidate_limits, link_names = (
+        _selection_context(db, run) if not summary_required else (None, None, None, None, None)
+    )
+    return cataloging_agent_tool_schemas(
+        summary_required=summary_required,
+        selected_type=selected_type,
+        selection_types=selection_types,
+        target_ids=target_ids,
+        scene_count=scene_count,
+        candidate_limits=candidate_limits,
+        link_names=link_names,
+    ), selected_type
+
+
 async def run_cataloging_agent(
     db: Session,
     job: CatalogingJob,
@@ -324,44 +344,39 @@ async def run_cataloging_agent(
     from ...architecture.uow import commit_session
     from ..workspace.native_tool_batch import (
         MAX_NATIVE_TOOL_NAME_REJECTIONS,
-        NativeToolBatchNotOpen,
+        NativeToolBatchRecoverable,
         validate_workspace_native_tool_batch,
     )
     from ..workspace.registry import registry
+    from .request_context import prepare_cataloging_request
 
     gateway = gateway or model_executor
     messages = _cataloging_messages(db, job, run)
+    checkpointed = False
     failures = 0
     text_only_responses = 0
-    tool_name_rejections = 0
+    batch_rejections: dict[str, int] = {}
     selected_type: str | None = None
     for step in range(48):
         check_active(db, job)
-        summary_required = _needs_chapter_summary(db, run)
-        if summary_required:
-            selected_type = None
-        selection_types, target_ids, scene_count, candidate_limits, link_names = (
-            _selection_context(db, run) if not summary_required else (None, None, None, None, None)
-        )
-        schemas = cataloging_agent_tool_schemas(
-            summary_required=summary_required,
-            selected_type=selected_type,
-            selection_types=selection_types,
-            target_ids=target_ids,
-            scene_count=scene_count,
-            candidate_limits=candidate_limits,
-            link_names=link_names,
-        )
+        schemas, selected_type = _cataloging_step_contract(db, run, selected_type)
         offered = {schema["function"]["name"]: schema for schema in schemas}
         allowed = frozenset(offered)
+        request = prepare_cataloging_request(
+            db, job, run, messages, schemas, selected_type=selected_type,
+            checkpointed=checkpointed,
+        )
+        if request.checkpointed and not checkpointed:
+            yield request.checkpoint_event(step + 1)
+        checkpointed = request.checkpointed
         response = await collect_tool_turn(
             gateway,
-            messages=messages,
+            messages=request.messages,
             tools=schemas,
             tool_choice="auto",
             model=job.model,
             temperature=CATALOGING_TEMPERATURE,
-            max_tokens=CATALOGING_MAX_TOKENS,
+            max_tokens=request.budget.output_reserve_tokens,
             timeout=CATALOGING_TIMEOUT_SECONDS,
             retry=1,
             extra_body=cataloging_extra_body(job.model),
@@ -379,22 +394,23 @@ async def run_cataloging_agent(
                 allowed_tool_names=allowed,
                 resolve_tool=registry.get,
                 require_initial_controller=False,
+                authorize_before_semantics=True,
             )
-        except NativeToolBatchNotOpen as error:
+        except NativeToolBatchRecoverable as error:
             # Receipt the entire denied batch without executing any prefix.
             # The same model must choose from the actual fixed-task contract.
-            tool_name_rejections += 1
-            error.recovery_fits = tool_name_rejections < MAX_NATIVE_TOOL_NAME_REJECTIONS
-            _record_unopened_tool_batch(db, run, messages, assistant, error)
-            unavailable = "、".join(error.details["tools"])
+            batch_rejections[error.reason] = batch_rejections.get(error.reason, 0) + 1
+            error.recovery_fits = batch_rejections[error.reason] < MAX_NATIVE_TOOL_NAME_REJECTIONS
+            _record_rejected_tool_batch(db, run, messages, assistant, error)
+            denied_names = "、".join(error.details["tools"])
             yield {
-                "type": "cataloging_plan_correction", "step": step + 1,
-                "status": "error",
-                "message": f"工具 {unavailable} 本步骤未开放，整批未执行；已返回可用工具让模型修正",
+                "type": "cataloging_plan_correction", "step": step + 1, "status": "error",
+                "reason": error.reason, "attempt": batch_rejections[error.reason],
+                "message": f"{error.message}已返回完整回执让模型修正：{denied_names}",
             }
             if not error.recovery_fits:
                 raise ValueError(
-                    f"模型累计三次调用本步骤未开放的工具 {unavailable}；整批未执行，候选已保留"
+                    f"模型累计三次工具批次校验失败：{error.message}（{denied_names}）；候选已保留"
                 ) from error
             continue
         if batch.calls:

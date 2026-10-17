@@ -801,6 +801,164 @@ class MobileCreationConversationAgentTest {
     }
 
     @Test
+    fun `standalone thinking tool chains retain exact reasoning across steps and reset on next user turn`() {
+        val requests = AtomicInteger()
+        fun call(id: String, name: String, arguments: String = "{}") = buildJsonObject {
+            put("id", id); put("type", "function")
+            put("function", buildJsonObject { put("name", name); put("arguments", arguments) })
+        }
+        withServer(object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val index = requests.getAndIncrement()
+                val round = index / 3
+                val step = index % 3
+                val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
+                val messages = body.getValue("messages").jsonArray.map { it.jsonObject }
+                val assistants = messages.filter { (it["tool_calls"] as? JsonArray).orEmpty().isNotEmpty() }
+                assertEquals(step, assistants.size)
+                assistants.forEachIndexed { previousStep, assistant ->
+                    assertEquals("原始思考 $round/$previousStep\n  保留原文。", assistant.string("reasoning_content"))
+                    assertEquals("调用前说明 $round/$previousStep", assistant.string("content"))
+                }
+                assertEquals(if (step == 2) 3 else step, messages.count { it.string("role") == "tool" })
+                assertFalse("thinking" in body)
+                if (round == 1) {
+                    assertTrue(messages.any { it.string("content").contains("第一次检查完成") })
+                    assertEquals("再查一遍", messages.last { it.string("role") == "user" }.string("content"))
+                }
+                val message = buildJsonObject {
+                    put("role", "assistant")
+                    if (step == 2) {
+                        put("content", if (round == 0) "第一次检查完成。" else "第二次检查完成。")
+                    } else {
+                        put("content", "调用前说明 $round/$step")
+                        put("reasoning_content", "原始思考 $round/$step\n  保留原文。")
+                        put("tool_calls", JsonArray(if (step == 0) listOf(call(
+                            "categories", "set_tool_categories", """{"enabled_categories":["creation_session"]}""",
+                        )) else listOf(
+                            call("session", "get_creation_session"),
+                            call("snapshot", "get_creation_snapshot"),
+                        )))
+                    }
+                }
+                return chatStreamResponse(buildJsonObject {
+                    put("choices", JsonArray(listOf(buildJsonObject { put("message", message) })))
+                }.toString())
+            }
+        }) { server -> runBlocking {
+            val harness = agent()
+            val source = session()
+            val storageId = "creation-reasoning-test"
+            harness.store.ensureConversationArchive(
+                projectId = storageId, conversationId = storageId, conversationKind = "creation",
+                creationSessionId = source.string("id"), title = "思考回放测试", archivedTurns = emptyList(),
+            )
+            listOf("先看看当前资料", "再查一遍").forEach { prompt ->
+                val turnContext = harness.store.beginTurn(
+                    projectId = storageId, conversationId = storageId, prompt = prompt,
+                    conversationKind = "creation", creationSessionId = source.string("id"),
+                )
+                val result = harness.agent.run(
+                    source = source, message = prompt, storageId = storageId,
+                    conversation = checkNotNull(harness.store.snapshot(storageId, storageId)),
+                    turnContext = turnContext, config = config(server).copy(model = "deepseek-flash"),
+                )
+                assertEquals("completed", result.status)
+                assertTrue(result.toolResults.all { it.jsonObject.string("status") == "ok" })
+                harness.store.finishTurn(
+                    projectId = storageId, turnContext = turnContext, content = result.reply,
+                    status = result.status, toolLogs = emptyList(),
+                )
+            }
+            assertEquals(6, requests.get())
+        } }
+    }
+
+    @Test
+    fun `standalone unopened batch stays atomic and model can select an authorized category to recover`() {
+        assertUnopenedBatchRecovery(repeated = false)
+    }
+
+    @Test
+    fun `standalone unopened batch stops after two model corrections and keeps denied transactions`() {
+        assertUnopenedBatchRecovery(repeated = true)
+    }
+
+    private fun assertUnopenedBatchRecovery(repeated: Boolean) {
+        val requests = AtomicInteger()
+        val writes = AtomicInteger()
+        fun call(id: String, name: String, arguments: String) = buildJsonObject {
+            put("id", id); put("type", "function")
+            put("function", buildJsonObject { put("name", name); put("arguments", arguments) })
+        }
+        withServer(object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val step = requests.getAndIncrement()
+                val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
+                val offered = body.getValue("tools").jsonArray.map { it.jsonObject["function"]!!.jsonObject.string("name") }
+                if (step >= 2) {
+                    val messages = body.getValue("messages").jsonArray.map { it.jsonObject }
+                    val rejected = messages.filter { it.string("tool_call_id").startsWith("denied-") }
+                    assertEquals(if (repeated) (step - 1) * 2 else 2, rejected.size)
+                    rejected.forEach { receipt ->
+                        val result = Json.parseToJsonElement(receipt.string("content")).jsonObject
+                        assertEquals("error", result.string("status"))
+                        val data = result.getValue("data").jsonObject
+                        assertEquals("native_tool_not_open", data.string("reason"))
+                        assertEquals(JsonPrimitive(false), data["executed"])
+                        assertTrue("patch_creation_session" in data.getValue("available_tools").jsonArray.map { it.jsonPrimitive.content })
+                    }
+                }
+                if (step in 1..2 || repeated) {
+                    assertFalse("get_creation_artifact" in offered)
+                }
+                val calls = when {
+                    step == 0 -> listOf(call("categories", "set_tool_categories", """{"enabled_categories":["creation_session"]}"""))
+                    step == 1 || repeated -> listOf(
+                        call("denied-write-$step", "patch_creation_session", """{"expected_revision":1,"changes":{"form":{"genre":"科幻"}}}"""),
+                        call("denied-read-$step", "get_creation_artifact", """{"artifact":"constraints"}"""),
+                    )
+                    step == 2 -> listOf(call("correct-categories", "set_tool_categories", """{"enabled_categories":["creation_artifacts"]}"""))
+                    step == 3 -> {
+                        assertTrue("get_creation_artifact" in offered)
+                        listOf(call("correct-read", "get_creation_artifact", """{"artifact":"constraints"}"""))
+                    }
+                    else -> emptyList()
+                }
+                return chatStreamResponse(buildJsonObject {
+                    put("choices", JsonArray(listOf(buildJsonObject { put("message", buildJsonObject {
+                        put("role", "assistant")
+                        put("reasoning_content", "保留第 $step 步思考")
+                        if (calls.isNotEmpty()) put("tool_calls", JsonArray(calls))
+                        else put("content", "已读取约束，没有修改数据。")
+                    }) })))
+                }.toString())
+            }
+        }) { server ->
+            val harness = agent { writes.incrementAndGet() }
+            val source = session()
+            if (repeated) {
+                val failure = assertFailsWith<MobileConversationContextException> {
+                    runBlocking { harness.run(source, "检查约束", config(server)) }
+                }
+                assertTrue(failure.message.orEmpty().contains("两次自动修正"))
+                val snapshot = runBlocking { checkNotNull(harness.store.snapshot("creation-session-1", "creation-session-1")) }
+                val runtime = snapshot.toolRuntimeState(snapshot.turns.last().turnId)!!
+                assertEquals(3, runtime.transactions.count { it.calls.any { call -> call.id.startsWith("denied-") } })
+                assertEquals(MobileToolTransactionState.DELIVERED, runtime.transactions.last().state)
+                assertEquals(4, requests.get())
+            } else {
+                val result = runBlocking { harness.run(source, "检查约束", config(server)) }
+                assertEquals("completed", result.status)
+                assertEquals(source, result.session)
+                assertEquals(5, requests.get())
+                assertEquals(2, result.toolResults.count { it.jsonObject.string("status") == "error" })
+            }
+            assertEquals(0, writes.get())
+        }
+    }
+
+    @Test
     fun `standalone agent can select no business tools and reply without writing`() {
         val requests = AtomicInteger()
         withServer(object : Dispatcher() {
@@ -879,12 +1037,12 @@ class MobileCreationConversationAgentTest {
     }
 
     @Test
-    fun `deepseek standalone conversation preserves thinking and omits unsupported tool choice`() {
+    fun `proxy named deepseek keeps thinking defaults and requested tool choice`() {
         val requests = AtomicInteger()
         withServer(object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
-                assertFalse("tool_choice" in body)
+                assertTrue("tool_choice" in body)
                 assertFalse("thinking" in body)
                 return if (requests.getAndIncrement() == 0) {
                     chatStreamResponse(

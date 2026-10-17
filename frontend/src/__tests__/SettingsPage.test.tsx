@@ -455,7 +455,7 @@ describe('SettingsPage startup and update controls', () => {
     expect(saveCall?.[1]?.context_window_tokens).toBe(96_000)
   })
 
-  it('uses the 256K fallback when an unknown custom model has no capacity profile', async () => {
+  it('uses the 128K fallback when an unknown custom model has no capacity profile', async () => {
     mockCustomModelConfig()
     api.post.mockImplementation((url: string) => {
       if (url === '/config/models/list') {
@@ -472,7 +472,7 @@ describe('SettingsPage startup and update controls', () => {
 
     const capacity = await screen.findByLabelText('模型上下文窗口 tokens')
     expect(capacity).not.toBeDisabled()
-    expect(screen.getByText(/可留空；司命会按 256,000 tokens 临时兜底/)).toBeInTheDocument()
+    expect(screen.getByText(/可留空；司命会按 128,000 tokens 临时兜底/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /^OK$/ }))
 
     await waitFor(() => expect(api.post).toHaveBeenCalledWith('/config/models', expect.objectContaining({

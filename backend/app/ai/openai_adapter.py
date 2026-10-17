@@ -17,6 +17,8 @@ from app.modules.operations.infrastructure.http_trace import ObservedHttpClient,
 
 from ..core.exceptions import LLMError
 from .base import BaseAdapter
+from .completion_status import require_complete_response
+from .request_policy import provider_extra_body, provider_tool_choice
 
 
 class TracedOpenAIHttpClient(TraceHttpMixin, DefaultAsyncHttpxClient):
@@ -36,7 +38,7 @@ class OpenAIClientProxy:
 
 def create_openai_compatible_client(api_key: str, base_url: str | None = None):
     """Create an AsyncOpenAI-compatible client with normalized display metadata."""
-    kwargs = {"api_key": api_key, "http_client": (
+    kwargs = {"api_key": api_key, "max_retries": 0, "http_client": (
         ObservedHttpClient(trust_env=False) if base_url and _is_loopback_url(base_url)
         else TracedOpenAIHttpClient()
     )}
@@ -133,19 +135,6 @@ def message_reasoning_content(message: object) -> str:
 def compact_openai_kwargs(kwargs: dict) -> dict:
     """Remove unset top-level parameters before sending OpenAI-compatible JSON."""
     return {key: value for key, value in kwargs.items() if value is not None}
-
-
-def _provider_extra_body(extra_body: dict | None) -> dict | None:
-    """Keep Siming orchestration metadata out of provider request bodies."""
-
-    if not extra_body:
-        return None
-    payload = {
-        key: value
-        for key, value in extra_body.items()
-        if not key.startswith(("moshu_", "local_cli_"))
-    }
-    return payload or None
 
 
 def _responses_message_content(content: object) -> object:
@@ -366,11 +355,15 @@ class OpenAIAdapter(BaseAdapter):
             "input": _responses_input(messages),
             "max_output_tokens": max_tokens,
             "tools": _responses_tools(tools),
-            "tool_choice": _responses_tool_choice(tool_choice),
+            "tool_choice": _responses_tool_choice(
+                provider_tool_choice(self.base_url, "responses", tool_choice),
+            ),
             "include": ["reasoning.encrypted_content"] if tools else None,
             "store": False,
             "stream": True if stream else None,
-            "extra_body": _provider_extra_body(extra_body),
+            "extra_body": provider_extra_body(
+                extra_body, self.base_url, "responses", text_only=not tools,
+            ),
         })
         return kwargs
 
@@ -393,6 +386,7 @@ class OpenAIAdapter(BaseAdapter):
             tools=tools,
             tool_choice=tool_choice,
         ))
+        require_complete_response(getattr(response, "status", None), max_tokens)
         return {
             "content": str(getattr(response, "output_text", "") or ""),
             "reasoning_content": responses_reasoning_content(response),
@@ -432,7 +426,7 @@ class OpenAIAdapter(BaseAdapter):
                 if delta:
                     yield {"type": "content_delta", "delta": delta}
                 continue
-            if event_type == "response.reasoning_summary_text.delta":
+            if event_type in {"response.reasoning_summary_text.delta", "response.reasoning_text.delta"}:
                 delta = str(getattr(event, "delta", "") or "")
                 if delta:
                     yield {"type": "reasoning_delta", "delta": delta}
@@ -551,14 +545,16 @@ class OpenAIAdapter(BaseAdapter):
             ))
             if tools:
                 kwargs["tools"] = tools
+            tool_choice = provider_tool_choice(self.base_url, "chat_completions", tool_choice)
             if tool_choice is not None:
                 kwargs["tool_choice"] = tool_choice
-            provider_body = _provider_extra_body(extra_body)
+            provider_body = provider_extra_body(extra_body, self.base_url, text_only=not tools)
             if provider_body:
                 kwargs["extra_body"] = provider_body
 
             response = await client.chat.completions.create(**kwargs)
             choice = response.choices[0]
+            require_complete_response(getattr(choice, "finish_reason", None), max_tokens)
             return {
                 "content": choice.message.content or "",
                 "reasoning_content": message_reasoning_content(choice.message),
@@ -578,6 +574,8 @@ class OpenAIAdapter(BaseAdapter):
             raise LLMError(f"OpenAI 连接错误: {e}")
         except APIError as e:
             raise LLMError(f"OpenAI API 错误: {e}")
+        except LLMError:
+            raise
         except Exception as e:
             raise LLMError(f"OpenAI 调用失败: {e}")
 
@@ -607,6 +605,8 @@ class OpenAIAdapter(BaseAdapter):
                         self.last_stream_finish_reason = str(
                             chunk.get("finish_reason") or "stop"
                         )
+                    else:
+                        yield ""  # Transport activity without exposing reasoning as prose.
                 return
             client = self._get_client()
             kwargs = compact_openai_kwargs(dict(
@@ -616,11 +616,12 @@ class OpenAIAdapter(BaseAdapter):
                 max_tokens=max_tokens,
                 stream=True,
             ))
-            provider_body = _provider_extra_body(extra_body)
+            provider_body = provider_extra_body(extra_body, self.base_url, text_only=True)
             if provider_body:
                 kwargs["extra_body"] = provider_body
             stream = await client.chat.completions.create(**kwargs)
             async for chunk in stream:
+                yield ""
                 choices = getattr(chunk, "choices", None) or []
                 if not choices:
                     continue
@@ -638,6 +639,8 @@ class OpenAIAdapter(BaseAdapter):
             raise LLMError(f"OpenAI 连接错误: {e}")
         except APIError as e:
             raise LLMError(f"OpenAI API 错误: {e}")
+        except LLMError:
+            raise
         except Exception as e:
             raise LLMError(f"OpenAI 流式调用失败: {e}")
 
@@ -674,9 +677,10 @@ class OpenAIAdapter(BaseAdapter):
             ))
             if tools:
                 kwargs["tools"] = tools
+            tool_choice = provider_tool_choice(self.base_url, "chat_completions", tool_choice)
             if tool_choice is not None:
                 kwargs["tool_choice"] = tool_choice
-            provider_body = _provider_extra_body(extra_body)
+            provider_body = provider_extra_body(extra_body, self.base_url, text_only=not tools)
             if provider_body:
                 kwargs["extra_body"] = provider_body
 
@@ -746,5 +750,7 @@ class OpenAIAdapter(BaseAdapter):
             raise LLMError(f"OpenAI 连接错误: {e}")
         except APIError as e:
             raise LLMError(f"OpenAI API 错误: {e}")
+        except LLMError:
+            raise
         except Exception as e:
             raise LLMError(f"OpenAI 流式调用失败: {e}")

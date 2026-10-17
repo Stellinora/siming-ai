@@ -66,13 +66,28 @@ class ProjectDeletionInstrumentedTest {
             assertTrue(dao.projectPackageSnapshot(id).isEmpty())
             assertEquals(0, dao.pendingMutationCount())
             assertNull(dao.pendingMutation(id, "chapter", "chapter"))
-            assertFalse(retained.exists())
+            assertTrue(retained.exists())
             db.openHelper.readableDatabase.query("SELECT COUNT(*) FROM local_conflicts").use {
                 assertTrue(it.moveToFirst())
                 assertEquals(0, it.getInt(0))
             }
             assertEquals(listOf("other"), repository.projects.first().map { it.project.projectId })
             assertEquals(ProjectDeletionResult.ALREADY_ABSENT, repository.deleteProject(id))
+            val recycle = dao.recycleEntries().single()
+            assertEquals("local_project", recycle.entityType)
+            repository.restoreRecycleEntry(recycle.id)
+            assertNotNull(dao.projectSyncRecord(id))
+            assertTrue(retained.exists())
+            assertEquals(2, dao.pendingMutationCount())
+            assertFalse(id in dao.excludedProjectIds())
+            assertTrue(dao.recycleEntries().isEmpty())
+            repository.deleteProject(id)
+            val expired = dao.recycleEntries().single()
+            dao.updateRecycleEntry(expired.copy(expiresAt = System.currentTimeMillis()))
+            repository.cleanupRecycleBin()
+            assertFalse(retained.exists())
+            assertTrue(dao.recycleEntries().isEmpty())
+            assertNull(dao.projectSyncRecord(id))
         } finally {
             db.close()
             source.delete()
@@ -96,7 +111,7 @@ class ProjectDeletionInstrumentedTest {
             dao.saveConnection(GatewayConnection(baseUrl = "http://127.0.0.1:1", gatewayName = "Unavailable fixture",
                 gatewayFingerprint = "fixture", deviceId = "fixture", deviceRole = "owner", protocolVersion = 1))
             assertEquals(ProjectDeletionResult.LOCAL_ONLY, repository.deleteProject(result.projectId))
-            assertFalse(retained.exists())
+            assertTrue(retained.exists())
             assertEquals(0, dao.pendingMutationCount())
         } finally {
             db.close()

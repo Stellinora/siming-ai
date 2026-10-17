@@ -4,13 +4,14 @@
  * Uses its own layout (no workspace sidebar).
  */
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Button, Layout, Menu, Tooltip, Typography } from 'antd'
 import {
   ApiOutlined,
   BookOutlined,
   BranchesOutlined,
   CodeOutlined,
+  DeleteOutlined,
   HddOutlined,
   HomeOutlined,
   MenuFoldOutlined,
@@ -30,6 +31,8 @@ import AppVersion from '../components/AppVersion'
 import { openContextInspector } from '../shared/contextInspector'
 import { GettingStartedPanel } from './GettingStartedPage'
 import './GuiPage.css'
+import PageNavigation from '../components/PageNavigation'
+import { confirmPageNavigation } from '../shared/pageNavigationGuard'
 
 const { Sider, Content } = Layout
 const { Title } = Typography
@@ -68,6 +71,7 @@ const MENU_ITEMS = [
       { key: 'context-inspector', icon: <BranchesOutlined />, label: '调用记录' },
       { key: 'settings', icon: <SettingOutlined />, label: '系统设置' },
       { key: 'terminal', icon: <CodeOutlined />, label: '运行日志' },
+      { key: 'recycle-bin', icon: <DeleteOutlined />, label: '回收站' },
     ],
   },
 ]
@@ -93,8 +97,11 @@ const TAB_RENDERERS = {
 }
 
 function GuiPage() {
-  const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState<GuiTab>('ai-chat')
+  const routerNavigate = useNavigate()
+  const navigate = (path: string) => confirmPageNavigation(() => routerNavigate(path))
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedTab = searchParams.get('tab')
+  const activeTab: GuiTab = requestedTab && requestedTab in TAB_RENDERERS ? requestedTab as GuiTab : 'ai-chat'
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [compactNavigation, setCompactNavigation] = useState(isCompactNavigation)
 
@@ -152,13 +159,21 @@ function GuiPage() {
           )}
         </div>
 
+        <div className="gui-page-navigation"><PageNavigation iconOnly={navigationCollapsed} /></div>
+
         {/* Navigation menu */}
         <Menu
           mode="inline"
           selectedKeys={[activeTab]}
           onClick={({ key }) => {
             if (key === 'context-inspector') openContextInspector({})
-            else setActiveTab(key as GuiTab)
+            else if (key === 'recycle-bin') navigate('/recycle-bin')
+            else confirmPageNavigation(() => {
+              const next = new URLSearchParams(searchParams)
+              if (key === 'ai-chat') next.delete('tab')
+              else next.set('tab', key)
+              setSearchParams(next)
+            })
           }}
           items={navigationItems}
           inlineCollapsed={navigationCollapsed}

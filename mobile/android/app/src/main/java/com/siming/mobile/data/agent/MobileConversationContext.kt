@@ -63,7 +63,14 @@ internal object MobileConversationContextErrorCode {
 internal class MobileConversationContextException(
     val code: String,
     override val message: String,
-) : IllegalStateException(message)
+) : IllegalStateException(message) {
+    val userFacingDetail: String
+        get() = if (code == MobileConversationContextErrorCode.PROTOCOL_INVALID) {
+            "模型工具调用或对话协议校验未通过；本批次未执行，此前进度已保留。"
+        } else {
+            "会话上下文校验失败；此前进度已保留。"
+        }
+}
 
 /** A stable transcript record. Sequence numbers are scoped to one conversation. */
 internal data class MobileTranscriptMessage(
@@ -677,7 +684,7 @@ internal object MobileRecentTurnPlanner {
         if (!baselineBudget.verified && !baselineBudget.boundedFallback) {
             throw MobileConversationContextException(
                 MobileConversationContextErrorCode.CAPACITY_UNKNOWN,
-                "动态历史规划需要已验证容量或有界 256K 兜底",
+                "动态历史规划需要已验证容量或有界 128K 兜底",
             )
         }
         require(baselineBudget.tokenCounterId == counter.counterId &&

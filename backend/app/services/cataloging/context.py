@@ -16,5 +16,7 @@ def ordered_chapters(db: Session, project_id: str, chapter_ids: list[str] | None
     ).all()
     by_id = {chapter.id: chapter for chapter in chapters}
     if chapter_ids:
-        return [by_id[item] for item in chapter_ids if item in by_id]
+        if any(item not in by_id for item in chapter_ids):
+            raise ValueError("所选章节不存在或不属于当前作品")
+        return [by_id[item] for item in dict.fromkeys(chapter_ids)]
     return chapters

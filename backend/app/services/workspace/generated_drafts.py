@@ -500,7 +500,9 @@ def discard_chapter_draft(db: Any, project_id: str, draft_id: str) -> Any:
         return draft
     if draft.status != "pending":
         raise ValidationError("该章节草稿已失效，不能再丢弃")
-    _set_chapter_draft_status(draft, "discarded", db=db)
+    from app.services.recycle_bin import capture_deletion
+    with capture_deletion(db, draft):
+        _set_chapter_draft_status(draft, "discarded", db=db)
     commit_session(db)
     return draft
 

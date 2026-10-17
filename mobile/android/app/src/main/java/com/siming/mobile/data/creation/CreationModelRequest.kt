@@ -31,13 +31,6 @@ internal class CreationModelRequest(private val definition: JsonObject) {
             tools = JsonArray(emptyList()),
             maxOutputTokens = maxTokens,
             temperature = temperature,
-            extraBody = if (config.isDeepSeekProvider()) buildJsonObject {
-                if (config.protocol == DirectApiConfig.PROTOCOL_RESPONSES) {
-                    put("reasoning", buildJsonObject { put("effort", "none") })
-                } else {
-                    put("thinking", buildJsonObject { put("type", "disabled") })
-                }
-            } else null,
             streamIdleTimeoutMillis = definition.getValue("stream_idle_timeout_seconds").jsonPrimitive.long * 1_000,
             onContentDelta = { delta ->
                 outputChars += delta.length

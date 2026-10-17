@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "contract_version": "2026-09-16",
+  "contract_version": "2026-10-16",
   "canonical_authority": "pc",
   "modes": {
     "pc": "桌面后端和前端所使用的权威领域实现。",
@@ -217,7 +217,7 @@
         },
         {
           "path": "mobile/android/app/src/test/java/com/siming/mobile/data/creation/MobileCreationConversationAgentTest.kt",
-          "contains": "deepseek standalone conversation preserves thinking and omits unsupported tool choice"
+          "contains": "proxy named deepseek keeps thinking defaults and requested tool choice"
         },
         {
           "path": "mobile/android/app/src/test/java/com/siming/mobile/data/agent/MobileChapterWriteStoreTest.kt",
@@ -891,6 +891,101 @@
         {
           "path": "backend/tests/test_mobile_authoring_commands.py",
           "contains": "test_local_input_bounds_match_the_shared_desktop_schema_cases"
+        }
+      ]
+    },
+    {
+      "id": "authoring.recycle_bin",
+      "area": "authoring",
+      "summary": "7日回收站、关联资料恢复与立即永久删除",
+      "status": "aligned",
+      "authority": {
+        "type": "pc_domain_service",
+        "entrypoint": "capture_deletion / restore_entry / purge_entry",
+        "source_refs": [
+          {
+            "path": "backend/app/services/recycle_bin.py",
+            "contains": "def restore_entry"
+          },
+          {
+            "path": "backend/app/routers/recycle_bin.py",
+            "contains": "/recycle-bin"
+          }
+        ]
+      },
+      "modes": {
+        "pc": {
+          "support": "canonical"
+        },
+        "android_online": {
+          "support": "local_domain",
+          "source_refs": [
+            {
+              "path": "mobile/android/app/src/main/java/com/siming/mobile/data/authoring/LocalRecycleStore.kt",
+              "contains": "internal class LocalRecycleStore"
+            },
+            {
+              "path": "mobile/android/app/src/main/java/com/siming/mobile/data/SimingRepository.kt",
+              "contains": "suspend fun restoreRecycleEntry"
+            }
+          ],
+          "notes": "手机独立执行7日保留、关联恢复、冲突校验和永久删除；本机回收快照不要求PC运行。手机资料删除/恢复命令按稳定ID顺序同步，PC拒绝或丢回执时保留恢复快照。本机整部作品移除只影响本机副本。回收站各端列出各自删除记录，PC删除需在PC回收站恢复，快照不随普通作品同步传输。"
+        },
+        "android_offline": {
+          "support": "local_domain",
+          "source_refs": [
+            {
+              "path": "mobile/android/app/src/main/java/com/siming/mobile/data/authoring/LocalRecycleStore.kt",
+              "contains": "internal class LocalRecycleStore"
+            },
+            {
+              "path": "mobile/android/app/src/main/java/com/siming/mobile/data/SimingRepository.kt",
+              "contains": "suspend fun restoreRecycleEntry"
+            }
+          ],
+          "notes": "手机独立执行7日保留、关联恢复、冲突校验和永久删除；本机回收快照不要求PC运行。手机资料删除/恢复命令按稳定ID顺序同步，PC拒绝或丢回执时保留恢复快照。本机整部作品移除只影响本机副本。回收站各端列出各自删除记录，PC删除需在PC回收站恢复，快照不随普通作品同步传输。"
+        },
+        "android_standalone": {
+          "support": "local_domain",
+          "source_refs": [
+            {
+              "path": "mobile/android/app/src/main/java/com/siming/mobile/data/authoring/LocalRecycleStore.kt",
+              "contains": "internal class LocalRecycleStore"
+            },
+            {
+              "path": "mobile/android/app/src/main/java/com/siming/mobile/data/SimingRepository.kt",
+              "contains": "suspend fun restoreRecycleEntry"
+            }
+          ],
+          "notes": "手机独立执行7日保留、关联恢复、冲突校验和永久删除；本机回收快照不要求PC运行。手机资料删除/恢复命令按稳定ID顺序同步，PC拒绝或丢回执时保留恢复快照。本机整部作品移除只影响本机副本。回收站各端列出各自删除记录，PC删除需在PC回收站恢复，快照不随普通作品同步传输。"
+        }
+      },
+      "side_effects": [
+        "author_data_restore",
+        "recycle_snapshot_delete",
+        "content_sync",
+        "sync_outbox"
+      ],
+      "idempotency": {
+        "required": true,
+        "strategy": "revisioned_outbox"
+      },
+      "tests": [
+        {
+          "path": "backend/tests/test_recycle_bin.py",
+          "contains": "test_expiry_exact_boundary_and_immediate_permanent_delete"
+        },
+        {
+          "path": "backend/tests/test_recycle_bin_access.py",
+          "contains": "test_paired_phone_cannot_access_global_recycle_bin"
+        },
+        {
+          "path": "mobile/android/app/src/androidTest/java/com/siming/mobile/RecycleBinInstrumentedTest.kt",
+          "contains": "class RecycleBinInstrumentedTest"
+        },
+        {
+          "path": "mobile/android/app/src/androidTest/java/com/siming/mobile/RecycleSyncInstrumentedTest.kt",
+          "contains": "offlineDeleteAndRestorePreserveSnapshotAcrossLostReceiptOrPcConflict"
         }
       ]
     },

@@ -92,7 +92,7 @@ describe('ContextGovernancePage', () => {
     render(<ContextGovernancePage projectId="p1" />)
 
     expect(await screen.findByText('未记录模型名称')).toBeInTheDocument()
-    expect(screen.queryByText(/256K/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/128K/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Agent 会阻断/)).not.toBeInTheDocument()
   })
 

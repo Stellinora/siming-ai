@@ -16,6 +16,7 @@ from app.modules.operations.infrastructure.http_trace import ObservedHttpClient
 
 from ..core.exceptions import LLMError
 from .base import BaseAdapter
+from .completion_status import require_complete_response
 
 
 class TracedAnthropicHttpClient(ObservedHttpClient):
@@ -220,7 +221,7 @@ class AnthropicAdapter(BaseAdapter):
         return "anthropic"
 
     def _get_client(self) -> AsyncAnthropic:
-        kwargs = {"api_key": self.api_key, "http_client": TracedAnthropicHttpClient()}
+        kwargs = {"api_key": self.api_key, "max_retries": 0, "http_client": TracedAnthropicHttpClient()}
         if self.base_url:
             kwargs["base_url"] = self.base_url
         return AsyncAnthropic(**kwargs)
@@ -259,6 +260,7 @@ class AnthropicAdapter(BaseAdapter):
                 # "auto" is Anthropic's default — no parameter needed
 
             response = await client.messages.create(**kwargs)
+            require_complete_response(getattr(response, "stop_reason", None), max_tokens)
             (
                 content_text,
                 tool_calls,
@@ -285,6 +287,8 @@ class AnthropicAdapter(BaseAdapter):
             raise LLMError(f"Anthropic 连接错误: {e}")
         except APIError as e:
             raise LLMError(f"Anthropic API 错误: {e}")
+        except LLMError:
+            raise
         except Exception as e:
             raise LLMError(f"Anthropic 调用失败: {e}")
 
@@ -311,9 +315,10 @@ class AnthropicAdapter(BaseAdapter):
                 kwargs["system"] = system
 
             async with client.messages.stream(**kwargs) as stream:
-                async for text in stream.text_stream:
-                    if text:
-                        yield text
+                async for event in stream:
+                    yield ""
+                    if event.type == "text_delta" and event.text:
+                        yield event.text
                 final_message = await stream.get_final_message()
                 self.last_stream_finish_reason = str(
                     getattr(final_message, "stop_reason", None) or "stop"
@@ -326,6 +331,8 @@ class AnthropicAdapter(BaseAdapter):
             raise LLMError(f"Anthropic 连接错误: {e}")
         except APIError as e:
             raise LLMError(f"Anthropic API 错误: {e}")
+        except LLMError:
+            raise
         except Exception as e:
             raise LLMError(f"Anthropic 流式调用失败: {e}")
 
@@ -422,5 +429,7 @@ class AnthropicAdapter(BaseAdapter):
             raise LLMError(f"Anthropic 连接错误: {e}")
         except APIError as e:
             raise LLMError(f"Anthropic API 错误: {e}")
+        except LLMError:
+            raise
         except Exception as e:
             raise LLMError(f"Anthropic 流式调用失败: {e}")

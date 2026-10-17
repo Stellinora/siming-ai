@@ -24,6 +24,7 @@ from ...database.write_coordination import DatabaseWriteLockTimeout
 from ..narrative_governance import record_chapter_governance_review
 from ..story_granularity import inspect_candidate_coverage_items
 from .candidate_io import candidate_payload, candidate_to_dict
+from .application_proof import require_application_proof
 from .chapter_link_ops import apply_chapter_link
 from .chapter_ops import apply_chapter_summary
 from .character_merge_ops import apply_character_merge_candidate
@@ -50,6 +51,9 @@ def apply_candidates_for_run(db: Session, job: CatalogingJob, run: CatalogingCha
     validate_cataloging_run_source(db, job, run)
     if job.status in {"cancelled", "paused"}:
         raise ValueError("建档任务已暂停或取消，不能继续写入")
+    require_application_proof(db, db.query(CatalogingCandidate).filter_by(
+        chapter_run_id=run.id, status="applied",
+    ).all())
     candidates = (
         db.query(CatalogingCandidate)
         .filter(CatalogingCandidate.chapter_run_id == run.id)
@@ -77,6 +81,7 @@ def apply_candidates_for_run(db: Session, job: CatalogingJob, run: CatalogingCha
                 events.append({"type": "candidate_applied", "candidate": candidate_to_dict(candidate),
                                "detail": result.get("detail"), "data": result})
             applied_candidates = [candidate for candidate in candidates if candidate.status == "applied"]
+            require_application_proof(db, applied_candidates)
             coverage = inspect_candidate_coverage_items(applied_candidates)
             if coverage.narrative_assessed:
                 source = coverage.governance_review_source or "provided"

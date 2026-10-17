@@ -58,7 +58,7 @@ internal fun rejectMobileUnopenedToolBatch(
         recoveryFits = canContinue,
         failure = MobileConversationContextException(
             MobileConversationContextErrorCode.PROTOCOL_INVALID,
-            "模型调用了当前未开放的工具 ${unavailable.first()}，本批次未执行。" +
+            "模型调用了当前未开放的工具 ${unavailable.first()}，本批次未执行，此前进度已保留。" +
                 if (rejectionCount >= MAX_NATIVE_TOOL_NAME_REJECTIONS) "已用完本轮两次自动修正机会。" else "",
         ),
     )

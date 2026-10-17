@@ -30,6 +30,7 @@ vi.mock('../hooks/useModelOptions', () => ({
 import WriterPage from '../pages/WriterPage'
 import { AiPanelProvider, useAiPanelContext } from '../contexts/AiPanelContext'
 import { storeNarrativeSourceLocator } from '../features/narrativeGovernance/sourceLocator'
+import { confirmPageNavigation } from '../shared/pageNavigationGuard'
 
 const source = '他站在门边，心中不由得涌起一阵复杂的情绪。值得注意的是，这一切都说明命运已经改变。'
 const candidate = '他扶住门框，指节压得发白。屋里那句话落下后，他半晌没有迈步。'
@@ -134,6 +135,44 @@ describe('WriterPage manual writing actions', () => {
     expect(screen.getByRole('button', { name: '保存正文' })).toBeEnabled()
     expect(screen.getByRole('button', { name: '保存并建档' })).toBeEnabled()
     expect(api.post).not.toHaveBeenCalled()
+  })
+
+  it('clears the deleted chapter dirty state so recycle bin navigation is not blocked', async () => {
+    const confirm = vi.spyOn(Modal, 'confirm').mockReturnValue({ destroy: vi.fn(), update: vi.fn() })
+    const getBeforeDeletion = api.get.getMockImplementation()!
+    let deleted = false
+    api.get.mockImplementation((url: string) => deleted && url.endsWith('/chapters')
+      ? Promise.resolve(response({ items: [], total: 0 })) : getBeforeDeletion(url))
+    api.delete.mockImplementation(async () => { deleted = true; return response(null) })
+    render(<WriterPage projectId="project-1" />)
+    fireEvent.change(await screen.findByDisplayValue(source), { target: { value: '删除前未保存的正文修改' } })
+    expect(screen.getByRole('status')).toHaveTextContent('有未保存修改')
+    fireEvent.click(screen.getByRole('button', { name: /章节操作/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /删除本章/ }))
+    await act(async () => { await confirm.mock.calls[0][0].onOk?.() })
+    await waitFor(() => expect(screen.queryByDisplayValue('删除前未保存的正文修改')).not.toBeInTheDocument())
+    expect(api.delete).toHaveBeenCalledWith('/projects/project-1/chapters/chapter-1')
+    const navigate = vi.fn()
+    confirmPageNavigation(navigate)
+    expect(navigate).toHaveBeenCalledOnce()
+    expect(confirm).toHaveBeenCalledOnce()
+  })
+
+  it('retains unsaved text and navigation protection when deleting a chapter fails', async () => {
+    const confirm = vi.spyOn(Modal, 'confirm').mockReturnValue({ destroy: vi.fn(), update: vi.fn() })
+    api.delete.mockRejectedValue(new Error('章节正在建档，暂时无法删除'))
+    render(<WriterPage projectId="project-1" />)
+    fireEvent.change(await screen.findByDisplayValue(source), { target: { value: '删除失败必须保留的正文' } })
+    fireEvent.click(screen.getByRole('button', { name: /章节操作/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /删除本章/ }))
+    await act(async () => { await confirm.mock.calls[0][0].onOk?.() })
+    expect(screen.getByDisplayValue('删除失败必须保留的正文')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('有未保存修改')
+    const navigate = vi.fn()
+    confirmPageNavigation(navigate)
+    expect(navigate).not.toHaveBeenCalled()
+    expect(confirm).toHaveBeenCalledTimes(2)
+    expect(confirm.mock.calls[1][0].title).toBe('还有未保存的修改')
   })
 
   it.each([{ ctrlKey: true }, { metaKey: true }])('saves only the current text with the keyboard shortcut %j', async (modifier) => {

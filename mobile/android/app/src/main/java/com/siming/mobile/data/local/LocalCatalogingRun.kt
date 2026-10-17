@@ -3,9 +3,11 @@ package com.siming.mobile.data.local
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import kotlinx.serialization.Serializable
 
 /** Durable chapter operation, plan and atomic application receipt, separate from sync replicas. */
 @Entity(tableName = "local_cataloging_runs", indices = [Index(value = ["projectId", "chapterId"])])
+@Serializable
 data class LocalCatalogingRun(
     @PrimaryKey val id: String,
     val projectId: String,

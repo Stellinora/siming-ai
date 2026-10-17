@@ -488,7 +488,7 @@ def test_creation_agent_rejects_invalid_native_batch_before_any_handler(
     assert caught.value.details["reason"] == expected_reason
     category_handler.assert_not_called()
     executor.assert_not_awaited()
-    assert completion.call_count == 1
+    assert completion.call_count == (3 if expected_reason == "native_tool_not_open" else 1)
 
 
 def test_creation_agent_renders_reference_as_data_without_replacing_author_message():
@@ -3153,7 +3153,13 @@ def test_creation_agent_rejects_non_creation_tools_even_if_model_requests_one():
                 "function": {"name": "delete_project", "arguments": "{}"},
             }],
         },
-        {"content": "没有执行越权操作。", "tool_calls": []},
+        *[{
+            "content": "",
+            "tool_calls": [{
+                "id": f"call-invalid-{index}", "type": "function",
+                "function": {"name": "delete_project", "arguments": "{}"},
+            }],
+        } for index in range(2)],
     ])
     executor = AsyncMock()
 
@@ -3177,7 +3183,7 @@ def test_creation_agent_rejects_non_creation_tools_even_if_model_requests_one():
     assert caught.value.details["reason"] == "native_tool_not_open"
     assert caught.value.details["tool"] == "delete_project"
     executor.assert_not_awaited()
-    assert completion.call_count == 2
+    assert completion.call_count == 4
 
 
 def test_creation_agent_returns_a_deterministic_formal_project_handoff():

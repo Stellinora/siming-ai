@@ -826,7 +826,7 @@ internal fun OutlineDetailScreen(
                     if (childCount > 0) {
                         "这个节点还有 $childCount 个直接子节点。PC 数据库会对父节点删除执行级联，因此手机端会阻止直接删除；请先移动或删除子节点。"
                     } else {
-                        "删除后会同步到其他设备。"
+                        "删除后可在回收站恢复，保留 7 天；有连接时同步删除记录。"
                     },
                 )
             },

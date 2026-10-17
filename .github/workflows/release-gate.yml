@@ -11,6 +11,7 @@ on:
       - "installer/**"
       - "scripts/build-exe.ps1"
       - "scripts/build-installer.ps1"
+      - "scripts/check-release-preflight.ps1"
       - "scripts/verify-python-build-lock.py"
       - "scripts/sign-windows-installer.ps1"
       - "scripts/verify-published-release.ps1"

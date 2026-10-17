@@ -112,7 +112,8 @@ TOOL_DEFINITIONS: tuple[ToolDef, ...] = (
             "payload": {"type": "object", "description": "Edited candidate payload"},
             "status": {
                 "type": "string",
-                "description": "pending|edited|approved|rejected|applying|applied|apply_failed",
+                "enum": ["pending", "edited", "approved", "rejected"],
+                "description": "Author review status; application status is managed by the executor.",
             },
         },
         required=["candidate_id"],
@@ -729,7 +730,10 @@ TOOL_DEFINITIONS: tuple[ToolDef, ...] = (
     ),
     ToolDef(
         name="save_external_cataloging_candidates",
-        description="Stage structured changes from one chapter plan. Send chapter_summary with real ID bindings first. Repair only rejected records. finalize=true requests completeness validation; manual mode waits for author confirmation.",
+        description=("Stage structured changes from one chapter plan. This must be the only tool call "
+                     "in the model step; never batch it with reads or another save. "
+                     "Send chapter_summary with real ID bindings first. Repair only rejected records. "
+                     "finalize=true requests completeness validation; manual mode waits for author confirmation."),
         input_schema={
             "job_id": {"type": "string"}, "chapter_id": {"type": "string"},
             "candidates": {"type": "array", "items": {"type": "object"}},

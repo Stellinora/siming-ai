@@ -339,7 +339,9 @@ private fun ConversationContextNotice(
     val title = when (state.status) {
         "pending", "compressing" -> "正在整理较早上下文"
         "ready" -> if (state.activeCheckpointId == null) "完整上下文在容量内" else "较早上下文已整理"
-        "failed" -> "上下文整理失败"
+        "failed" -> if (state.errorCode == MobileConversationContextErrorCode.PROTOCOL_INVALID) {
+            "工具调用或对话协议校验未通过"
+        } else "上下文整理失败"
         "cancelled" -> "上下文整理已取消"
         "stale", "superseded" -> "上下文需要重新整理"
         "syncing_transcript" -> "正在同步手机完整会话"

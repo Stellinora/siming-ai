@@ -65,7 +65,7 @@ class ReferenceAssistantWorkspaceTest {
     }
 
     @Test
-    fun `assistant task model override uses bounded 256k fallback`() {
+    fun `assistant task model override uses bounded 128k fallback`() {
         val config = DirectApiConfig(
             displayName = "test",
             baseUrl = "https://example.test/v1",

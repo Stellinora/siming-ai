@@ -12,6 +12,7 @@ from app.database.schema_models import (
     SchemaMetadata,
 )
 from app.database.session import Base
+from app.modules.story.infrastructure.recycle_models import RecycleBinEntry
 from app.modules.assistant.infrastructure.models import (
     AssistantConversation,
     AssistantConversationReplica,
@@ -125,6 +126,7 @@ from app.modules.story.infrastructure.entities import (
 from app.modules.story.infrastructure.models import ContentSyncJob, ProjectPackageImportReceipt
 
 __all__ = [
+    "RecycleBinEntry",
     "Project",
     "WorldbuildingEntry",
     "WorldbuildingRelation",

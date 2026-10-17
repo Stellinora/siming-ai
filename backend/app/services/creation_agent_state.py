@@ -57,6 +57,7 @@ class CreationTurnState:
     compacted_transactions: list[dict[str, Any]] = field(default_factory=list)
     native_transaction_count: int = 0
     consecutive_capacity_rejections: int = 0
+    native_tool_name_rejections: int = 0
     active_categories: tuple[str, ...] = ()
     successful_write_count: int = 0
     failed_write_count: int = 0

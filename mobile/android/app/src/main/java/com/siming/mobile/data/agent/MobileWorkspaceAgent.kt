@@ -103,6 +103,22 @@ internal class MobileWorkspaceAgent(
     suspend fun discardChapterDraft(draftId: String): Boolean =
         chapterWriteStore.markDiscarded(draftId) != null
 
+    suspend fun restoreRecycledDraft(type: String, data: JsonObject) {
+        if (type == "chapter_draft") {
+            val run = MobileChapterWriteRun.fromJson(data)
+            val current = chapterWriteStore.load(run.id)
+            require(current == null || com.siming.mobile.data.local.sameRecycledDraft(current.toJson(), data)) { "该章节草稿已变化，不能覆盖恢复" }
+            val pending = chapterWriteStore.latestGenerated(run.projectId)
+            require(pending == null || pending.id == run.id) { "已有待处理章节草稿，请先保存或丢弃后恢复" }
+            chapterWriteStore.save(run)
+        } else {
+            val run = MobileOutlineDraftRun.fromJson(data)
+            val current = outlineDraftStore.load(run.id)
+            require(current == null || com.siming.mobile.data.local.sameRecycledDraft(current.toJson(), data)) { "该大纲草稿已变化，不能覆盖恢复" }
+            outlineDraftStore.save(run)
+        }
+    }
+
     suspend fun pendingOutlineDraft(projectId: String): JsonObject? =
         outlineDraftStore.latestPending(projectId)?.let(::outlineDraftData)
 
@@ -510,9 +526,6 @@ internal class MobileWorkspaceAgent(
         onEvent: suspend (String) -> Unit,
     ) {
         var currentConversation = conversation
-        val extraBody = if (config.isDeepSeekProvider()) buildJsonObject {
-            put("thinking", buildJsonObject { put("type", "disabled") })
-        } else null
         for (attempt in 1..FINAL_SYNTHESIS_ATTEMPTS) {
             onEvent(event(
                 type = "status",
@@ -536,7 +549,6 @@ internal class MobileWorkspaceAgent(
                 extraRuntimeInstruction = FINAL_SYNTHESIS_INSTRUCTION + if (attempt > 1) {
                     " 上一次无工具总结没有返回文字，本次必须输出可读的最终答复。"
                 } else "",
-                extraBody = extraBody,
             )
             currentConversation = prepared.conversation
             MobileToolProtocolValidator.validate(
@@ -555,7 +567,6 @@ internal class MobileWorkspaceAgent(
                     toolChoice = "none",
                     maxOutputTokens = config.maxOutputTokens,
                     temperature = 0.3,
-                    extraBody = extraBody,
                     onContentDelta = { delta ->
                         streamedContent.append(delta)
                         onEvent(event(type = "content_delta", delta = delta))
@@ -2185,17 +2196,12 @@ internal class MobileWorkspaceAgent(
     private suspend fun createCharacter(projectId: String, args: JsonObject): JsonObject {
         if (args.string("name").isBlank()) return skipped("create_character", "角色名为空")
         val id = UUID.randomUUID().toString()
-        var normalized = args
-        if (args.string("current_goal").isBlank() && args.string("motivation").isNotBlank()) {
-            normalized = normalized.withDerived("current_goal", args.getValue("motivation"))
-        }
-        if (args.string("active_conflict").isBlank() && args.string("conflict").isNotBlank()) {
-            normalized = normalized.withDerived("active_conflict", args.getValue("conflict"))
-        }
+        val normalized = characterToolPayload(args)
         val payload = mergeRecord(null, normalized, "character", projectId, id)
             .withDefaults(mapOf("role_type" to JsonPrimitive("supporting"), "is_evolution_tracked" to JsonPrimitive(true)))
         val savedId = saveEntity(projectId, "character", id, payload)
-        return ok("create_character", "已创建角色：${payload.string("name")}", clean(payload).withDerived("id", JsonPrimitive(savedId)))
+        val saved = records(projectId, "character").first { it.entity.entityId == savedId }.payload
+        return ok("create_character", "已创建角色：${saved.string("name")}", clean(saved))
     }
 
     private suspend fun updateCharacter(projectId: String, args: JsonObject): JsonObject {
@@ -2204,16 +2210,11 @@ internal class MobileWorkspaceAgent(
             if (id.isNotBlank()) it.entity.entityId == id
             else it.payload.string("name") == args.string("name")
         } ?: return skipped("update_character", "未找到角色")
-        var normalized = args
-        if (args.string("current_goal").isBlank() && args.string("motivation").isNotBlank()) {
-            normalized = normalized.withDerived("current_goal", args.getValue("motivation"))
-        }
-        if (args.string("active_conflict").isBlank() && args.string("conflict").isNotBlank()) {
-            normalized = normalized.withDerived("active_conflict", args.getValue("conflict"))
-        }
+        val normalized = characterToolPayload(args, current.payload)
         val payload = mergeRecord(current.payload, normalized, "character", projectId, current.entity.entityId, LOCATOR_FIELDS)
         saveEntity(projectId, "character", current.entity.entityId, payload)
-        return ok("update_character", "已更新角色：${payload.string("name")}", clean(payload))
+        val saved = records(projectId, "character").first { it.entity.entityId == current.entity.entityId }.payload
+        return ok("update_character", "已更新角色：${saved.string("name")}", clean(saved))
     }
 
     private suspend fun updateOutlineNode(projectId: String, args: JsonObject): JsonObject {
@@ -2226,9 +2227,10 @@ internal class MobileWorkspaceAgent(
         val current = all.firstOrNull {
             if (!ids.isNullOrBlank()) it.entity.entityId == ids else it.payload.string("title") in titles
         } ?: return skipped("update_outline_node", "未找到大纲节点")
-        val payload = mergeRecord(current.payload, args, "outline", projectId, current.entity.entityId, LOCATOR_FIELDS)
+        val payload = mergeRecord(current.payload, outlineToolPayload(args), "outline", projectId, current.entity.entityId, LOCATOR_FIELDS)
         saveEntity(projectId, "outline", current.entity.entityId, payload)
-        return ok("update_outline_node", "已更新大纲节点：${payload.string("title")}", clean(payload))
+        val saved = records(projectId, "outline").first { it.entity.entityId == current.entity.entityId }.payload
+        return ok("update_outline_node", "已更新大纲节点：${saved.string("title")}", clean(saved))
     }
 
     private suspend fun createWorldbuilding(projectId: String, args: JsonObject): JsonObject {

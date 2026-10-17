@@ -15,6 +15,27 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface SimingDao {
+    @Query("SELECT id, projectId, entityType, title, projectTitle, deletedAt, expiresAt, state FROM recycle_entries ORDER BY deletedAt DESC")
+    fun observeRecycleEntries(): Flow<List<RecycleEntrySummary>>
+    @Query("SELECT * FROM recycle_entries ORDER BY deletedAt DESC")
+    suspend fun recycleEntries(): List<RecycleEntry>
+    @Query("SELECT * FROM recycle_entries WHERE id = :id")
+    suspend fun recycleEntry(id: String): RecycleEntry?
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun saveRecycleEntry(entry: RecycleEntry)
+    @Update
+    suspend fun updateRecycleEntry(entry: RecycleEntry)
+    @Query("DELETE FROM recycle_entries WHERE restoreMutationId = :mutationId")
+    suspend fun acknowledgeRecycleRestore(mutationId: String)
+    @Query("DELETE FROM recycle_entries WHERE id = :id")
+    suspend fun deleteRecycleEntry(id: String)
+    @Query("SELECT * FROM replica_entities WHERE projectId = :projectId")
+    suspend fun allProjectReplicas(projectId: String): List<ReplicaEntity>
+    @Query("SELECT * FROM sync_outbox WHERE projectId = :projectId ORDER BY createdAt, rowid")
+    suspend fun projectMutations(projectId: String): List<OutboxMutation>
+    @Query("SELECT * FROM local_conflicts WHERE projectId = :projectId")
+    suspend fun projectConflicts(projectId: String): List<LocalConflict>
+
     @Query("SELECT DISTINCT projectId FROM replica_entities WHERE entityType = 'local_receipt' AND operation = 'delete'")
     suspend fun acknowledgedAuthoringProjects(): List<String>
     @Query("SELECT projectId FROM excluded_projects")
@@ -251,8 +272,9 @@ interface SimingDao {
         StoredProjectPackage::class,
         LocalCatalogingRun::class,
         ExcludedProject::class,
+        RecycleEntry::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class SimingDatabase : RoomDatabase() {
@@ -267,7 +289,7 @@ abstract class SimingDatabase : RoomDatabase() {
                 SimingDatabase::class.java,
                 "siming-mobile.db",
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                 .build()
                 .also { instance = it }
         }
@@ -275,6 +297,14 @@ abstract class SimingDatabase : RoomDatabase() {
         internal val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 restoreImportedChapterCatalogingState(db)
+            }
+        }
+
+        internal val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `recycle_entries` (`id` TEXT NOT NULL, `projectId` TEXT NOT NULL, `entityType` TEXT NOT NULL, `entityId` TEXT NOT NULL, `title` TEXT NOT NULL, `projectTitle` TEXT NOT NULL, `deletedAt` INTEGER NOT NULL, `expiresAt` INTEGER NOT NULL, `snapshotJson` TEXT NOT NULL, `state` TEXT NOT NULL, `restoreMutationId` TEXT, PRIMARY KEY(`id`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_recycle_entries_expiresAt` ON `recycle_entries` (`expiresAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_recycle_entries_projectId` ON `recycle_entries` (`projectId`)")
             }
         }
 

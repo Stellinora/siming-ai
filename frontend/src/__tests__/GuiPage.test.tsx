@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import GuiPage from '../pages/GuiPage'
 import SystemNav from '../components/SystemNav'
@@ -15,6 +15,12 @@ vi.mock('../components/TabCache', () => ({ default: () => <div>当前页面</div
 vi.mock('../themes/ThemeSwitcher', () => ({ default: () => <button type="button">主题</button> }))
 
 const COMPACT_QUERY = '(max-width: 760px)'
+
+function NavigationHistory() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  return <><output aria-label="页面地址">{location.search}</output><button onClick={() => navigate(-1)}>回到前页</button></>
+}
 
 describe('GuiPage responsive navigation', () => {
   let compact = false
@@ -65,6 +71,15 @@ describe('GuiPage responsive navigation', () => {
     expect(screen.getByText('创作控制台')).toBeInTheDocument()
     expect(screen.getByText('创作入口')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '收起导航' })).toBeInTheDocument()
+  })
+
+  it('opens a linked page and preserves browser back navigation between control panel tabs', () => {
+    render(<MemoryRouter initialEntries={['/gui?tab=terminal']}><GuiPage /><NavigationHistory /></MemoryRouter>)
+    expect(screen.getByRole('menuitem', { name: /运行日志/ })).toHaveClass('ant-menu-item-selected')
+    fireEvent.click(screen.getByRole('menuitem', { name: /系统设置/ }))
+    expect(screen.getByLabelText('页面地址')).toHaveTextContent('?tab=settings')
+    fireEvent.click(screen.getByRole('button', { name: '回到前页' }))
+    expect(screen.getByRole('menuitem', { name: /运行日志/ })).toHaveClass('ant-menu-item-selected')
   })
 
   it.each(['desktop', 'library'] as const)('opens all calls from %s without a project or reply', (entry) => {

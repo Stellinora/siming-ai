@@ -223,6 +223,8 @@ function WriterPage({ projectId, focusChapterId, sourceLocatorKey }: WriterPageP
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const {
     isDirty,
+    getEditRevision,
+    hasUnsavedChanges,
     saveStatus,
     saveError,
     markDirty,
@@ -309,6 +311,9 @@ function WriterPage({ projectId, focusChapterId, sourceLocatorKey }: WriterPageP
   const snapshotRequestVersionRef = useRef(0)
   const pendingNewDraftRef = useRef(pendingNewDraft)
   pendingNewDraftRef.current = pendingNewDraft
+  const editorOwnerRef = useRef('')
+  editorOwnerRef.current = `${projectId}:${selectedId}:${creating}:${pendingNewDraft?.draftId || ''}`
+  const loadedChapterRef = useRef<string | null>(null)
 
 
   const getContentTextArea = () => document.querySelector<HTMLTextAreaElement>(
@@ -383,9 +388,20 @@ function WriterPage({ projectId, focusChapterId, sourceLocatorKey }: WriterPageP
 
   const fetchDetail = useCallback(async (chapterId: string) => {
     const requestVersion = ++detailRequestVersionRef.current
+    const owner = editorOwnerRef.current
+    const revision = getEditRevision()
     try {
       const res = await apiClient.get<ApiResponse<ChapterDetail>>(`/projects/${projectId}/chapters/${chapterId}`)
       if (requestVersion !== detailRequestVersionRef.current || pendingNewDraftRef.current) return
+      if (owner !== editorOwnerRef.current || revision !== getEditRevision()) return
+      if (loadedChapterRef.current === `${projectId}:${chapterId}` && hasUnsavedChanges()) {
+        setDetail(current => current?.id === chapterId && current.current_version === res.data.data.current_version
+          ? { ...current, cataloging_required: res.data.data.cataloging_required,
+              summary_text: res.data.data.summary_text, key_events: res.data.data.key_events }
+          : current)
+        return
+      }
+      loadedChapterRef.current = `${projectId}:${chapterId}`
       setDetail(res.data.data)
       if (!res.data.data.cataloging_required) setCatalogingStartedChapterId(null)
       setCreating(false)
@@ -402,7 +418,7 @@ function WriterPage({ projectId, focusChapterId, sourceLocatorKey }: WriterPageP
       if (requestVersion !== detailRequestVersionRef.current || pendingNewDraftRef.current) return
       message.error(err.message || '获取章节详情失败')
     }
-  }, [fetchSnapshots, form, markSaved, projectId])
+  }, [fetchSnapshots, form, getEditRevision, hasUnsavedChanges, markSaved, projectId])
 
   const blockFormalChapterNavigation = useCallback(() => {
     if (saveInFlightRef.current) return true
@@ -792,7 +808,7 @@ function WriterPage({ projectId, focusChapterId, sourceLocatorKey }: WriterPageP
       || '当前章节'
     Modal.confirm({
       title: `删除「${chapterTitle}」？`,
-      content: '该章节的正文、版本历史和出场记录都会一并删除，此操作不可恢复。',
+      content: '该章节的正文、版本历史和出场记录将一并移至回收站，7 天内可恢复。',
       okText: '删除',
       cancelText: '取消',
       okButtonProps: { danger: true },
@@ -808,7 +824,7 @@ function WriterPage({ projectId, focusChapterId, sourceLocatorKey }: WriterPageP
       await apiClient.delete(`/projects/${projectId}/chapter-drafts/${draft.draftId}`)
       updateGeneratedDraft({ status: 'discarded' })
       fetchChapters()
-      message.success('章节草稿已丢弃；正式正文未改变')
+      message.success('章节草稿已移至回收站，7 天内可恢复；正式正文未改变')
     } catch (err: any) {
       message.error(err?.response?.data?.detail || err.message || '丢弃章节草稿失败')
     } finally {
@@ -821,8 +837,8 @@ function WriterPage({ projectId, focusChapterId, sourceLocatorKey }: WriterPageP
     Modal.confirm({
       title: '丢弃这份 AI 章节草稿？',
       content: pendingGeneratedDraft.draftKind === 'revision'
-        ? '修订候选会被丢弃；如已应用，将恢复应用前的编辑内容。正式章节正文不会改变。'
-        : '这份草稿及当前编辑会被丢弃；已有正式章节和大纲不会改变。',
+        ? '修订候选将移至回收站，7 天内可恢复；如已应用，将恢复应用前的编辑内容。未保存的手动修改不会保留。'
+        : '已生成草稿将移至回收站，7 天内可恢复；未保存的手动修改不会保留。已有正式章节和大纲不会改变。',
       okText: '丢弃草稿',
       cancelText: '继续编辑',
       okButtonProps: { danger: true },
@@ -837,6 +853,12 @@ function WriterPage({ projectId, focusChapterId, sourceLocatorKey }: WriterPageP
   ) => {
     if (saveInFlightRef.current || (selectedId && catalogingStartedChapterId === selectedId)) return
     if (!values.title.trim()) { message.warning('请输入章节标题'); return }
+    if (!pendingNewDraft && !creating && selectedId && detail?.id !== selectedId) {
+      message.error('章节仍在加载，请稍后保存')
+      return
+    }
+    const submittedRevision = getEditRevision()
+    const savingOwner = editorOwnerRef.current
     saveInFlightRef.current = true
     setSaveMode(catalogingMode)
     setSaving(true)
@@ -859,8 +881,10 @@ function WriterPage({ projectId, focusChapterId, sourceLocatorKey }: WriterPageP
       let savedData: ChapterDetail
       if (pendingNewDraft || creating || !selectedId) {
         const res = await apiClient.post<ApiResponse<ChapterDetail>>(`/projects/${projectId}/chapters`, payload)
+        if (savingOwner !== editorOwnerRef.current) return
         savedData = res.data.data
         savedChapterId = res.data.data.id
+        loadedChapterRef.current = `${projectId}:${savedChapterId}`
         setSelectedId(savedChapterId)
         setCreating(false)
         setDetail(res.data.data)
@@ -870,6 +894,7 @@ function WriterPage({ projectId, focusChapterId, sourceLocatorKey }: WriterPageP
           trigger_type: acceptedRevision ? 'ai_revision' : appliedDeAiRevision ? 'de_ai' : 'manual_save',
           expected_version: acceptedRevision?.baseChapterVersion || detail?.current_version,
         })
+        if (savingOwner !== editorOwnerRef.current) return
         savedData = res.data.data
         setDetail(res.data.data)
         fetchSnapshots(selectedId)
@@ -879,7 +904,8 @@ function WriterPage({ projectId, focusChapterId, sourceLocatorKey }: WriterPageP
       }
       setAppliedDeAiRevision(null)
       setAppliedGeneratedRevision(null)
-      markSaved()
+      if (submittedRevision === getEditRevision()) markSaved()
+      else markDirty()
       fetchChapters()
       if (catalogingMode === 'save_and_catalog') {
         setCatalogingError(null)
@@ -976,13 +1002,30 @@ function WriterPage({ projectId, focusChapterId, sourceLocatorKey }: WriterPageP
 
   const deleteChapter = async () => {
     if (!selectedId) return
+    const chapterId = selectedId
+    const owner = editorOwnerRef.current
     try {
-      await apiClient.delete(`/projects/${projectId}/chapters/${selectedId}`)
-      message.success('章节已删除')
-      setSelectedId(null)
-      setDetail(null)
-      setAppliedDeAiRevision(null)
-      fetchChapters()
+      await apiClient.delete(`/projects/${projectId}/chapters/${chapterId}`)
+      message.success('章节已移至回收站，7 天内可恢复')
+      setChapters((current) => current.filter((chapter) => chapter.id !== chapterId))
+      if (owner === editorOwnerRef.current) {
+        // The deleted editor no longer owns unsaved work or pending read results.
+        detailRequestVersionRef.current += 1
+        snapshotRequestVersionRef.current += 1
+        loadedChapterRef.current = null
+        setSelectedId(null)
+        setDetail(null)
+        setSnapshots([])
+        setDiff(null)
+        setAppliedDeAiRevision(null)
+        setAppliedGeneratedRevision(null)
+        setSelectedText('')
+        setSelectedTextChapterId(null)
+        editorSelectionRef.current = null
+        form.resetFields()
+        markSaved()
+        void fetchChapters()
+      }
     } catch (err: any) {
       message.error(err.message || '删除章节失败')
     }
@@ -1035,8 +1078,13 @@ function WriterPage({ projectId, focusChapterId, sourceLocatorKey }: WriterPageP
 
   const restoreSnapshot = async (snapshotId: string) => {
     if (!selectedId || saveInFlightRef.current) return
+    const owner = editorOwnerRef.current
+    const revision = getEditRevision()
+    const requestVersion = ++detailRequestVersionRef.current
     try {
       const res = await apiClient.post<ApiResponse<ChapterDetail>>(`/projects/${projectId}/chapters/${selectedId}/restore/${snapshotId}`)
+      if (owner !== editorOwnerRef.current || revision !== getEditRevision()
+        || requestVersion !== detailRequestVersionRef.current || pendingNewDraftRef.current) return
       setDetail(res.data.data)
       form.setFieldsValue({ title: res.data.data.title, outline_node_id: res.data.data.outline_node_id || undefined, content: res.data.data.content })
       setAppliedDeAiRevision(null)

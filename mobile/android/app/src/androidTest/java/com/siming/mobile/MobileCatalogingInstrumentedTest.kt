@@ -53,11 +53,163 @@ class MobileCatalogingInstrumentedTest {
             })))
         })
     }
+    private fun batch(vararg calls: DirectAgentTurn): DirectAgentTurn = DirectAgentTurn(
+        "", "", calls.flatMap { it.toolCalls }, buildJsonObject {
+            put("role", "assistant"); put("content", "")
+            put("tool_calls", JsonArray(calls.flatMap { it.assistantMessage.getValue("tool_calls").jsonArray }))
+        },
+    )
+
+    private suspend fun seedThreeChapters(db: SimingDatabase): List<String> {
+        val records = fixture.getValue("records").jsonArray.map { CatalogRecord.fromJson(it.jsonObject) }
+        suspend fun save(record: CatalogRecord) = db.dao().saveEntity(ReplicaEntity(
+            ReplicaEntity.key(projectId, record.entityType, record.id), projectId, record.entityType,
+            record.id, 0, "upsert", record.payload.toString(), "fixture", "2026-10-16T00:00:00Z",
+        ))
+        records.filter { it.recordType == "project" || it.id == ids.text("volume") }.forEach { save(it) }
+        val originalChapter = records.single { it.recordType == "chapter" }
+        val originalOutline = records.single { it.id == ids.text("outline") }
+        val originalSnapshot = records.single { it.id == ids.text("snapshot") }
+        return (1..3).map { index ->
+            val chapter = "00000000-0000-0000-0001-${index.toString().padStart(12, '0')}"
+            val outline = "00000000-0000-0000-0002-${index.toString().padStart(12, '0')}"
+            val snapshot = "00000000-0000-0000-0003-${index.toString().padStart(12, '0')}"
+            val prose = "第${index}章的城外风景。清晨的云层沿着山脊缓慢移动，旧路延伸到远处，雨后的石阶留下清晰水痕。"
+            save(originalChapter.copy(id = chapter, payload = JsonObject(originalChapter.payload + mapOf(
+                "id" to JsonPrimitive(chapter), "title" to JsonPrimitive("第${index}章"),
+                "content" to JsonPrimitive(prose), "outline_node_id" to JsonPrimitive(outline),
+                "sort_order" to JsonPrimitive(index - 1),
+            ))))
+            save(originalOutline.copy(id = outline, payload = JsonObject(originalOutline.payload + mapOf(
+                "id" to JsonPrimitive(outline), "title" to JsonPrimitive("第${index}章"),
+                "sort_order" to JsonPrimitive(index - 1),
+            ))))
+            save(originalSnapshot.copy(id = snapshot, payload = JsonObject(originalSnapshot.payload + mapOf(
+                "id" to JsonPrimitive(snapshot), "chapter_id" to JsonPrimitive(chapter), "content" to JsonPrimitive(prose),
+            ))))
+            chapter
+        }
+    }
+
+    private fun simpleSummary() = JsonObject(fixture.getValue("candidates").jsonArray.first().jsonObject + mapOf(
+        "summary_text" to JsonPrimitive("本章描写清晨的城外风景，云层沿着山脊缓慢移动，雨后的石阶仍然留有水痕，旧路一直延伸到远处。本章只交代完整环境场景，不新增正式人物或世界观档案。"),
+        "scenes" to jsonStrings(listOf("城外清晨")), "key_events" to JsonArray(emptyList()),
+        "character_bindings" to JsonArray(emptyList()), "worldbuilding_bindings" to JsonArray(emptyList()),
+        "coverage_manifest" to buildJsonObject {
+            put("scene_count", 1); listOf("characters", "character_profiles", "worldbuilding", "relationships").forEach { put(it, JsonArray(emptyList())) }
+        },
+        "narrative_state" to buildJsonObject {},
+    ))
+
+    @Test fun threeChaptersRecoverSecondChapterMixedSaveBatchesWithoutPartialExecution() = runBlocking {
+        for (otherTool in listOf("read_cataloging_archive", "save_external_cataloging_candidates", "invented_cataloging_save")) {
+            val db = database()
+            try {
+                val chapters = seedThreeChapters(db)
+                val steps = mutableMapOf<String, Int>()
+                val bodies = chapters.associateWith { id -> db.dao().entity(ReplicaEntity.key(projectId, "chapter", id))!!.payloadJson!! }
+                val config = DirectApiConfig("mock", "https://example.test", "fixture", "mock/cataloging")
+                val runtime = MobileCataloging(db, contract, config) { messages, _, _ ->
+                    val task = Json.parseToJsonElement(messages[1].text("content")).jsonObject
+                    val chapter = task.text("chapter_id")
+                    val job = task.text("job_id")
+                    val index = steps.getOrDefault(chapter, 0).also { steps[chapter] = it + 1 }
+                    val second = chapter == chapters[1]
+                    val summaryArgs = buildJsonObject {
+                        put("job_id", job); put("chapter_id", chapter); put("candidates", JsonArray(listOf(simpleSummary()))); put("finalize", false)
+                    }
+                    if (second && index == 1) {
+                        assertEquals("completed", db.dao().catalogingRuns(projectId).single { it.chapterId == chapters[0] }.status)
+                        assertFalse(db.dao().catalogingRuns(projectId).any { it.chapterId == chapters[2] })
+                        val extra = if (otherTool == "read_cataloging_archive") call(otherTool, buildJsonObject { put("kind", "character") })
+                            else call(otherTool, summaryArgs)
+                        batch(call("save_external_cataloging_candidates", summaryArgs), extra)
+                    } else {
+                        if (second && index == 2) {
+                            val receipts = messages.takeLast(2).map { Json.parseToJsonElement(it.text("content")).jsonObject }
+                            assertEquals(2, receipts.size)
+                            val expectedReason = if (otherTool == "invented_cataloging_save") "native_tool_not_open" else "cataloging_tool_must_be_only_call"
+                            assertTrue(receipts.all { it.obj("data").text("reason") == expectedReason })
+                            if (otherTool == "invented_cataloging_save") assertTrue(receipts.all {
+                                it.obj("data").strings("unavailable_tools") == listOf("invented_cataloging_save")
+                            })
+                            assertTrue(receipts.all { it.obj("data")["executed"] == JsonPrimitive(false) && it.obj("data")["retryable"] == JsonPrimitive(true) })
+                            assertTrue(Json.parseToJsonElement(db.dao().catalogingRun(job)!!.candidatesJson).jsonArray.isEmpty())
+                            assertFalse(db.dao().projectSnapshot(projectId).any { it.entityType == "summary" && Json.parseToJsonElement(it.payloadJson!!).jsonObject.text("chapter_id") == chapter })
+                        }
+                        val phase = index - if (second && index >= 2) 1 else 0
+                        when (phase) {
+                            0 -> call("get_next_external_cataloging_chapter", buildJsonObject { put("job_id", job) })
+                            1 -> call("save_external_cataloging_candidates", summaryArgs)
+                            2 -> call("select_cataloging_candidate_types", buildJsonObject { put("types", jsonStrings(listOf("outline_update_chapter"))) })
+                            3 -> {
+                                val source = Json.parseToJsonElement(bodies.getValue(chapter)).jsonObject
+                                call("save_external_cataloging_candidates", buildJsonObject {
+                                    put("job_id", job); put("chapter_id", chapter); put("finalize", false)
+                                    put("candidates", JsonArray(listOf(buildJsonObject {
+                                        put("type", "outline_update"); put("id", source.text("outline_node_id")); put("node_type", "chapter")
+                                        put("title", source.text("title")); put("summary", "清晨城外的山脊、旧路与雨后石阶。"); put("character_ids", JsonArray(emptyList()))
+                                    })))
+                                })
+                            }
+                            4 -> call("save_external_cataloging_candidates", buildJsonObject {
+                                put("job_id", job); put("chapter_id", chapter); put("candidates", JsonArray(emptyList())); put("finalize", true)
+                            })
+                            else -> error("Unexpected model step $phase")
+                        }
+                    }
+                }
+                val result = runtime.run(projectId, chapters) { _, _ -> }
+                assertEquals("completed", result.status)
+                assertEquals(3, result.completedChapters)
+                assertEquals(listOf(5, 6, 5), chapters.map { steps.getValue(it) })
+                assertTrue(db.dao().catalogingRuns(projectId).all { it.status == "completed" && Json.parseToJsonElement(it.candidatesJson).jsonArray.size == 2 })
+                chapters.forEach { id ->
+                    val after = Json.parseToJsonElement(db.dao().entity(ReplicaEntity.key(projectId, "chapter", id))!!.payloadJson!!).jsonObject
+                    assertEquals(Json.parseToJsonElement(bodies.getValue(id)).jsonObject.text("content"), after.text("content"))
+                    assertEquals(JsonPrimitive(false), after["cataloging_required"])
+                }
+            } finally { db.close() }
+        }
+    }
+
+    @Test fun threeMixedBatchesStopOncePerBatchAndKeepAcceptedPlan() = runBlocking {
+        val db = database()
+        try {
+            val chapters = seedThreeChapters(db)
+            var step = 0
+            val config = DirectApiConfig("mock", "https://example.test", "fixture", "mock/cataloging")
+            val runtime = MobileCataloging(db, contract, config) { messages, _, _ ->
+                val task = Json.parseToJsonElement(messages[1].text("content")).jsonObject
+                val job = task.text("job_id")
+                val args = buildJsonObject {
+                    put("job_id", job); put("chapter_id", chapters.first()); put("candidates", JsonArray(listOf(simpleSummary()))); put("finalize", false)
+                }
+                when (step++) {
+                    0 -> call("get_next_external_cataloging_chapter", buildJsonObject { put("job_id", job) })
+                    1 -> call("save_external_cataloging_candidates", args)
+                    else -> batch(call("save_external_cataloging_candidates", args), call("read_cataloging_archive", buildJsonObject { put("kind", "character") }))
+                }
+            }
+            val result = runCatching { runtime.run(projectId, chapters) { _, _ -> } }
+            assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("累计 3 次混合调用"))
+            assertEquals(5, step)
+            val run = db.dao().catalogingRuns(projectId).single()
+            assertEquals("failed", run.status)
+            assertEquals(1, Json.parseToJsonElement(run.candidatesJson).jsonArray.size)
+            val transcript = Json.parseToJsonElement(run.transcriptJson).jsonObject.objects("messages")
+            val last = transcript.takeLast(2).map { Json.parseToJsonElement(it.text("content")).jsonObject.obj("data") }
+            assertTrue(last.all { it["executed"] == JsonPrimitive(false) && it["retryable"] == JsonPrimitive(false) })
+            assertTrue(db.dao().projectSnapshot(projectId).none { it.entityType == "summary" })
+        } finally { db.close() }
+    }
     private fun scripted(
         db: SimingDatabase, splitBatches: Boolean = false, denyFirstBatch: Boolean = false,
+        noisyHistory: Boolean = false,
         intercept: suspend (Int) -> Unit = {},
     ): MobileCataloging {
         var step = 0
+        var resumingSummary = false
         val candidates = fixture.getValue("candidates").jsonArray
         val batches = candidates.drop(1).groupBy {
             val candidate = it.jsonObject
@@ -68,11 +220,18 @@ class MobileCatalogingInstrumentedTest {
             listOf(kind to emptyList<JsonElement>()) +
                 (if (splitBatches) rows.map { listOf(it) } else listOf(rows)).map { "" to it }
         }
-        return MobileCataloging(db, contract, "mock/deepseek-contract") { messages, tools, _ ->
-            val index = step++ - if (denyFirstBatch) 1 else 0
+        val config = DirectApiConfig("mock", "https://example.test", "test-key", "mock/deepseek-contract",
+            contextWindowTokens = if (noisyHistory) 64_000 else null)
+        return MobileCataloging(db, contract, config) { messages, tools, _ ->
+            val taskState = Json.parseToJsonElement(messages[1].text("content")).jsonObject
+            if (step == 0) resumingSummary = taskState.obj("resume").objects("accepted_candidates")
+                .any { it.text("item_type") == "chapter_summary" }
+            val rawIndex = step++ - if (denyFirstBatch) 1 else 0
+            // Retry keeps the already saved summary and resumes at candidate selection.
+            val index = rawIndex + if (resumingSummary && rawIndex >= 2) 1 else 0
             intercept(index)
-            val jobId = Json.parseToJsonElement(messages[1].text("content")).jsonObject.text("job_id")
-            when (index) {
+            val jobId = taskState.text("job_id")
+            val result = when (index) {
                 -1 -> {
                     val first = call("invented_cataloging_save", buildJsonObject {})
                     val read = call("get_next_external_cataloging_chapter", buildJsonObject { put("job_id", jobId) })
@@ -87,7 +246,7 @@ class MobileCatalogingInstrumentedTest {
                         assertTrue(denied.all { "save_external_cataloging_candidates" in it.obj("data").strings("available_tools") })
                         assertTrue(Json.parseToJsonElement(db.dao().catalogingRun(jobId)!!.candidatesJson).jsonArray.isEmpty())
                     }
-                    assertEquals(4, tools.size)
+                    assertEquals(if (resumingSummary) 5 else 4, tools.size)
                     assertFalse(tools.any { it.jsonObject.obj("function").text("name") == "set_tool_categories" })
                     call("get_next_external_cataloging_chapter", buildJsonObject { put("job_id", jobId); put("include_content", true) })
                 }
@@ -113,7 +272,28 @@ class MobileCatalogingInstrumentedTest {
                     })
                 }
             }
+            if (noisyHistory) result.copy(assistantMessage = JsonObject(result.assistantMessage +
+                ("content" to JsonPrimitive("历史建档过程说明，已在候选中保存。".repeat(240))))) else result
         }
+    }
+
+    @Test fun independentPhoneCompletes64kCatalogingWithLosslessCheckpointAndFullAudit() = runBlocking {
+        val db = database()
+        try {
+            seed(db)
+            val source = db.dao().entity(ReplicaEntity.key(projectId, "chapter", chapterId))!!.payloadJson!!
+            assertNull(db.dao().connection())
+            val result = scripted(db, splitBatches = true, noisyHistory = true).run(projectId, listOf(chapterId)) { _, _ -> }
+            assertEquals("completed", result.status)
+            val run = db.dao().catalogingRuns(projectId).single()
+            val transcript = Json.parseToJsonElement(run.transcriptJson).jsonObject
+            assertTrue(transcript.objects("context_checkpoints").isNotEmpty())
+            assertTrue(transcript.objects("messages").count { it.text("role") == "assistant" } > 10)
+            assertEquals(fixture.getValue("candidates").jsonArray.size, Json.parseToJsonElement(run.candidatesJson).jsonArray.size)
+            assertTrue(db.dao().projectSnapshot(projectId).any { it.entityType == "summary" })
+            val after = db.dao().entity(ReplicaEntity.key(projectId, "chapter", chapterId))!!.payloadJson!!
+            assertEquals(Json.parseToJsonElement(source).jsonObject.text("content"), Json.parseToJsonElement(after).jsonObject.text("content"))
+        } finally { db.close() }
     }
 
     @Test fun independentPhoneKeepsTypeAcrossSplitBatchesAndCorrectsUnopenedBatch() = runBlocking {

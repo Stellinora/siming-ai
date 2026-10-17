@@ -142,7 +142,8 @@ class SqlAlchemyWorldbuildingWorkspace:
         project = get_project_or_404(self._session, project_id)
         entry = self._entry(project_id, entry_id)
         content_file_path = entry.content_file_path
-        self._session.delete(entry)
+        from app.services.recycle_bin import delete_to_recycle
+        delete_to_recycle(self._session, entry)
         self._session.flush()
         return StoryMutation(
             sync_intents=[

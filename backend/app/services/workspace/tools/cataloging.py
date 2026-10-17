@@ -254,14 +254,11 @@ async def update_cataloging_candidate(db: Session, project_id: str, args: dict[s
     candidate = db.query(CatalogingCandidate).filter(CatalogingCandidate.id == candidate_id, CatalogingCandidate.project_id == project_id).first()
     if not candidate:
         return {"tool": "update_cataloging_candidate", "status": "skipped", "detail": "未找到候选项"}
-    if isinstance(args.get("payload"), dict):
-        import json
-
-        candidate.edited_payload = json.dumps(args.get("payload"), ensure_ascii=False)
-        if candidate.status == "pending":
-            candidate.status = "edited"
-    if args.get("status"):
-        candidate.status = str(args.get("status"))
+    from ...cataloging.candidate_review import update_candidate_review
+    try:
+        update_candidate_review(db, candidate, args.get("payload"), args.get("status"))
+    except ValueError as exc:
+        return {"tool": "update_cataloging_candidate", "status": "skipped", "detail": str(exc)}
     db.flush()
     return {"tool": "update_cataloging_candidate", "status": "ok", "detail": "候选项已更新", "data": candidate_to_dict(candidate)}
 

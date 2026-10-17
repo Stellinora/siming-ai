@@ -134,7 +134,7 @@ def test_stream_resume_does_not_invent_assistant_without_provider_state():
         {"role": "user", "content": "Continue the novel"},
     ]
     original = deepcopy(messages)
-    recovered, handshake = _resume_messages(messages, "Already delivered text", tool_mode=True)
+    recovered, handshake = _resume_messages(messages, "Already delivered text")
     assert messages == original
     assert not any(item["role"] == "assistant" for item in recovered)
     assert "Already delivered text" in repr(recovered)
@@ -191,7 +191,7 @@ def test_tool_choice_correction_has_its_own_single_attempt(retry, second_failure
 
     tools = [{"type": "function", "function": {"name": "read", "parameters": {"type": "object"}}}]
     config = SimpleNamespace(
-        api_key="test-key", base_url="https://api.deepseek.com", api_protocol="chat_completions"
+        api_key="test-key", base_url="https://proxy.example.com/v1", api_protocol="chat_completions"
     )
 
     async def collect():
@@ -401,7 +401,8 @@ def test_real_creation_turn_retains_category_and_read_with_thinking_protocol():
 
 
 @pytest.mark.parametrize("surface", ["creation", "workspace"])
-def test_resumed_tools_keep_only_the_completed_attempts_native_reasoning(surface):
+@pytest.mark.parametrize("accepted_reasoning", ["completed-reasoning", ""])
+def test_resumed_tools_keep_only_the_completed_attempts_native_reasoning(surface, accepted_reasoning):
     from app.services.agent_tool_stream import collect_tool_turn
     from app.services.workspace.assistant_native_turn import NativeStepCapture, WorkspaceNativeTurn
     from app.services.workspace.assistant_turn_state import WorkspaceAssistantTurnState
@@ -436,14 +437,9 @@ def test_resumed_tools_keep_only_the_completed_attempts_native_reasoning(surface
             assert len(requests) == 2
             assert requests[-1][-1] == {"role": "user", "content": "write once"}
             assert not any(item["role"] == "assistant" for item in requests[-1])
-            reference = next(
-                item
-                for item in requests[-1]
-                if item["content"].startswith("[SERVER_VERIFIED_STREAM_CHECKPOINT]")
-            )
-            checkpoint = json.loads(reference["content"].splitlines()[2])
-            yield {"type": "reasoning_delta", "delta": "completed-reasoning"}
-            yield {"type": "content_delta", "delta": checkpoint["required_prefix"] + " suffix"}
+            assert requests[-1] == requests[0]
+            yield {"type": "reasoning_delta", "delta": accepted_reasoning}
+            yield {"type": "content_delta", "delta": "complete accepted response"}
             yield {
                 "type": "tool_call_delta",
                 "index": 0,
@@ -510,8 +506,8 @@ def test_resumed_tools_keep_only_the_completed_attempts_native_reasoning(surface
         ),
     ):
         result = asyncio.run(collect())
-    assert result["content"] == "prefix suffix"
-    assert result["reasoning_content"] == "completed-reasoning"
+    assert result["content"] == "complete accepted response"
+    assert result["reasoning_content"] == accepted_reasoning
     assert result["provider_state"] == [
         {"type": "reasoning", "encrypted_content": "completed-state"}
     ]
@@ -550,7 +546,7 @@ def test_parameter_correction_does_not_consume_or_poison_transport_retry(streame
             yield {"type": "done", "finish_reason": "stop"}
 
     config = SimpleNamespace(
-        api_key="test-key", base_url="https://api.deepseek.com", api_protocol="chat_completions"
+        api_key="test-key", base_url="https://proxy.example.com/v1", api_protocol="chat_completions"
     )
     kwargs = {
         "messages": [{"role": "user", "content": "read"}],

@@ -363,7 +363,8 @@ class SqlAlchemySystemConversationStore:
         }
 
     def delete(self, conversation_id: str) -> dict[str, Any]:
-        self._session.delete(self._conversation(conversation_id))
+        from app.services.recycle_bin import delete_to_recycle
+        delete_to_recycle(self._session, self._conversation(conversation_id))
         self._session.flush()
         return {"id": conversation_id}
 

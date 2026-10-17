@@ -437,7 +437,7 @@ def test_runtime_instruction_is_rendered_in_system_not_as_second_user() -> None:
 
 def test_unknown_profile_uses_bounded_fallback_and_can_send() -> None:
     binding, counter, _ = resolve_generation_model_binding(
-        orchestrator=_Orchestrator(known=False, window=256_000),
+        orchestrator=_Orchestrator(known=False, window=128_000),
         model="custom:test",
         task_type="assistant",
         protocol="chat_completions",

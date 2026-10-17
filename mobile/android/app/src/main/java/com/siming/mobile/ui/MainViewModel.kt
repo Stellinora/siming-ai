@@ -308,6 +308,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         SharingStarted.WhileSubscribed(5_000),
         emptyList(),
     )
+    val recycleEntries: kotlinx.coroutines.flow.StateFlow<List<com.siming.mobile.data.local.RecycleEntrySummary>> = repository.recycleEntries.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val creationDrafts = repository.creationDrafts.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
@@ -340,6 +341,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         viewModelScope.launch {
             repository.recoverInterruptedCataloging()
+            runCatching { repository.cleanupRecycleBin() }
             runCatching { repository.refreshCreationDrafts() }
         }
     }
@@ -874,13 +876,41 @@ private fun updateCatalogingProgress(
         }
     }
 
+    fun refreshRecycleBin() { viewModelScope.launch { runCatching { repository.cleanupRecycleBin() }.onFailure(::showError) } }
+
+    fun restoreRecycleEntry(id: String) {
+        viewModelScope.launch {
+            try {
+                require(assistantJob?.isActive != true && catalogingJob?.isActive != true) { "请先取消正在执行的写作或建档任务" }
+                uiState.value = uiState.value.copy(busy = true, error = null)
+                val projectId = repository.restoreRecycleEntry(id)
+                uiState.value = uiState.value.copy(notice = "已恢复；有同步连接时将同步恢复记录")
+                restorePendingChapterDraft(projectId)
+                restorePendingOutlineDraft(projectId)
+            } catch (error: Exception) { showError(error) }
+            finally { uiState.value = uiState.value.copy(busy = false) }
+        }
+    }
+
+    fun permanentlyDeleteRecycleEntry(id: String) {
+        viewModelScope.launch {
+            try {
+                uiState.value = uiState.value.copy(busy = true, error = null)
+                repository.permanentlyDeleteRecycleEntry(id)
+                uiState.value = uiState.value.copy(notice = "已永久删除")
+            } catch (error: Exception) { showError(error) }
+            finally { uiState.value = uiState.value.copy(busy = false) }
+        }
+    }
+
     fun deleteProject(projectId: String, onDeleted: () -> Unit) {
         viewModelScope.launch {
             try {
+                require(assistantJob?.isActive != true && catalogingJob?.isActive != true) { "请先取消正在执行的写作或建档任务" }
                 val result = repository.deleteProject(projectId)
                 uiState.value = uiState.value.copy(
                     notice = when (result) {
-                        ProjectDeletionResult.LOCAL_ONLY -> "本地作品已从手机删除，待同步记录已取消"
+                        ProjectDeletionResult.LOCAL_ONLY -> "本机作品已移入回收站，7 天内可恢复"
                         ProjectDeletionResult.ALREADY_ABSENT -> "这部作品已删除"
                     },
                 )

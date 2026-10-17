@@ -339,7 +339,8 @@ async def delete_project(db: Session, project_id: str, args: dict[str, Any]) -> 
         return {"tool": "delete_project", "status": "skipped", "detail": "未找到作品"}
     title = project.title
     folder_path = project.folder_path
-    db.delete(project)
+    from app.services.recycle_bin import delete_to_recycle
+    delete_to_recycle(db, project)
     queue_content_sync(
         db,
         ContentSyncIntent(

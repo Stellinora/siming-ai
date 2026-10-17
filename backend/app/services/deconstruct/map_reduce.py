@@ -58,7 +58,7 @@ async def repair_json_output(raw_text: str, model: Optional[str]) -> tuple[Optio
             max_tokens=map_output_limit_for(model),
             timeout=JSON_REPAIR_TIMEOUT_SECONDS,
             retry=1,
-            extra_body={"thinking": {"type": "disabled"}} if model and "deepseek" in model.lower() else None,
+            extra_body={"moshu_task_type": "deconstruct"},
         )
     except Exception as exc:
         return None, "repair_failed", str(exc)
@@ -102,7 +102,7 @@ async def map_chunk(chunk: str, index: int, model: Optional[str], options: dict)
                 max_tokens=map_output_limit_for(model),
                 timeout=MAP_TIMEOUT_SECONDS,
                 retry=1,
-                extra_body={"thinking": {"type": "disabled"}} if model and "deepseek" in model.lower() else None,
+                extra_body={"moshu_task_type": "deconstruct"},
             )
         except Exception as exc:
             error_text = str(exc)
@@ -169,7 +169,7 @@ async def stream_map_chunk(
                 max_tokens=map_output_limit_for(model),
                 timeout=MAP_STREAM_IDLE_TIMEOUT_SECONDS,
                 retry=1,
-                extra_body={"thinking": {"type": "disabled"}} if model and "deepseek" in model.lower() else None,
+                extra_body={"moshu_task_type": "deconstruct"},
             )
             async for token in gen:
                 full_text += token

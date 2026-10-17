@@ -3,6 +3,7 @@ package com.siming.mobile.data.local
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import kotlinx.serialization.Serializable
 
 /** An explicit removal from this device must survive later sync/bootstrap. */
 @Entity(tableName = "excluded_projects")
@@ -15,6 +16,7 @@ data class ExcludedProject(@PrimaryKey val projectId: String)
         Index(value = ["projectId", "dirty"]),
     ],
 )
+@Serializable
 data class ReplicaEntity(
     @PrimaryKey val key: String,
     val projectId: String,
@@ -42,6 +44,7 @@ data class ReplicaEntity(
         Index(value = ["projectId", "entityType", "entityId", "state"]),
     ],
 )
+@Serializable
 data class OutboxMutation(
     @PrimaryKey val mutationId: String,
     val projectId: String,
@@ -83,6 +86,7 @@ data class SyncCursor(
     tableName = "local_conflicts",
     indices = [Index(value = ["projectId", "status"])],
 )
+@Serializable
 data class LocalConflict(
     @PrimaryKey val id: String,
     val projectId: String,
@@ -102,6 +106,7 @@ data class LocalConflict(
         Index(value = ["syncState", "createdAt"]),
     ],
 )
+@Serializable
 data class StoredProjectPackage(
     @PrimaryKey val idempotencyKey: String,
     val packageId: String,

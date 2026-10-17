@@ -250,7 +250,7 @@ class WorkspaceNativeTurn:
         chunk: dict[str, Any],
         iteration: int,
     ) -> list[str]:
-        if isinstance(chunk.get("reasoning_content"), str) and chunk["reasoning_content"]:
+        if isinstance(chunk.get("reasoning_content"), str):
             capture.reasoning = chunk["reasoning_content"]
         capture.provider_state = chunk.get("provider_state") or []
         visible = self.state.reasoning_event(iteration, capture.reasoning)

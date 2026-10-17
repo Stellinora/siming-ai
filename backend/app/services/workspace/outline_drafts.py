@@ -456,12 +456,15 @@ def _close_outline_draft(
 
 
 def discard_outline_draft(db: Any, project_id: str, draft_id: str) -> Any:
-    return _close_outline_draft(
-        db,
-        project_id,
-        draft_id,
-        status="discarded",
-    )
+    from app.core.exceptions import ValidationError
+    from app.services.recycle_bin import capture_deletion
+    row = find_outline_draft(db, project_id, draft_id)
+    if row is None:
+        raise ValidationError("大纲草稿不存在")
+    with capture_deletion(db, row):
+        result = _close_outline_draft(db, project_id, draft_id, status="discarded")
+    commit_session(db)
+    return result
 
 
 def supersede_outline_draft(db: Any, project_id: str, draft_id: str) -> Any:

@@ -32,7 +32,14 @@ TOOL = {
 }
 
 
-def test_managed_runtime_measures_loaded_model_template_and_authenticates(monkeypatch):
+@pytest.mark.parametrize("extra_body, expected_kwargs", [
+    (None, {"enable_thinking": True}),
+    ({"chat_template_kwargs": {"enable_thinking": False}}, {"enable_thinking": False}),
+    ({"chat_template_kwargs": {}}, {}),
+])
+def test_managed_runtime_measures_loaded_model_template_and_authenticates(
+    monkeypatch, extra_body, expected_kwargs,
+):
     manager = LocalRuntimeManager()
     manager._model_key = "qwen3.8-27b-q3"
     manager._port = 12345
@@ -45,7 +52,7 @@ def test_managed_runtime_measures_loaded_model_template_and_authenticates(monkey
         body = json.loads(request.content)
         requests.append((request.url.path, body))
         if request.url.path == "/apply-template":
-            assert body["chat_template_kwargs"] == {"enable_thinking": True}
+            assert body["chat_template_kwargs"] == expected_kwargs
             prompt = "system user chapter_writer tool" if "tools" in body else "system user"
             return httpx.Response(200, json={"prompt": prompt})
         if request.url.path == "/tokenize":
@@ -57,7 +64,7 @@ def test_managed_runtime_measures_loaded_model_template_and_authenticates(monkey
         "app.services.local_runtime.token_counter.httpx.Client",
         lambda **kwargs: original_client(transport=httpx.MockTransport(handle)),
     )
-    measured = manager.request_token_counter("qwen3.8-27b-q3", [TOOL])
+    measured = manager.request_token_counter("qwen3.8-27b-q3", [TOOL], extra_body=extra_body)
 
     assert measured is not None
     assert measured.count_request_sections([], [TOOL]) == (2, 66)
@@ -155,7 +162,7 @@ class _ProfileResolver:
         )
 
 
-def _bind(provider: str, model_name: str, protocol: str = "native"):
+def _bind(provider: str, model_name: str, protocol: str = "native", extra_body=None):
     return resolve_generation_model_binding(
         orchestrator=_ProfileResolver(provider, model_name),
         model=f"{provider}:{model_name}",
@@ -163,13 +170,14 @@ def _bind(provider: str, model_name: str, protocol: str = "native"):
         protocol=protocol,
         system_prompt="system",
         current_tools=[TOOL],
+        extra_body=extra_body,
     )
 
 
 def test_local_template_count_enters_budget_and_changes_with_model(monkeypatch):
     calls = []
 
-    def measure(model_key, tools):
+    def measure(model_key, tools, *, extra_body=None):
         calls.append(model_key)
         assert tools == [TOOL]
         count = 200 if model_key == "model-a" else 300
@@ -217,7 +225,7 @@ def test_local_template_count_enters_budget_and_changes_with_model(monkeypatch):
 
 
 def test_non_local_or_unavailable_model_keeps_byte_budget(monkeypatch):
-    manager = SimpleNamespace(request_token_counter=lambda *_: None)
+    manager = SimpleNamespace(request_token_counter=lambda *_, **kwargs: None)
     monkeypatch.setattr("app.services.local_runtime.get_runtime_manager", lambda: manager)
     _, local_counter, _ = _bind("local_llama_cpp", "not-running")
     _, cloud_counter, _ = _bind("openai", "remote-model")
@@ -226,3 +234,20 @@ def test_non_local_or_unavailable_model_keeps_byte_budget(monkeypatch):
     assert isinstance(cloud_counter, Utf8ByteTokenCounter)
     assert isinstance(direct_counter, Utf8ByteTokenCounter)
     assert local_counter.count_value([TOOL]) == len(canonical_json([TOOL]).encode("utf-8"))
+
+
+def test_local_binding_forwards_template_override_and_binds_its_identity(monkeypatch):
+    calls = []
+
+    def measure(model_key, tools, *, extra_body=None):
+        calls.append(extra_body)
+        return None
+
+    monkeypatch.setattr("app.services.local_runtime.get_runtime_manager", lambda: SimpleNamespace(
+        request_token_counter=measure,
+    ))
+    default, _, _ = _bind("local_llama_cpp", "model-a")
+    override = {"chat_template_kwargs": {"enable_thinking": False}, "moshu_task_type": "cataloging"}
+    cataloging, _, _ = _bind("local_llama_cpp", "model-a", extra_body=override)
+    assert calls == [None, override]
+    assert cataloging.fingerprint != default.fingerprint

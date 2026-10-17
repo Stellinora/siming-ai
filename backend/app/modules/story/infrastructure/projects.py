@@ -134,7 +134,8 @@ class SqlAlchemyProjectWorkspace:
     def delete(self, project_id: str) -> StoryMutation:
         project = self._project(project_id)
         folder_path = project.folder_path
-        self._session.delete(project)
+        from app.services.recycle_bin import delete_to_recycle
+        delete_to_recycle(self._session, project)
         self._session.flush()
         return StoryMutation(
             sync_intents=[

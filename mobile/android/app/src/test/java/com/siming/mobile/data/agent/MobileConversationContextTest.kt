@@ -19,7 +19,7 @@ import kotlinx.serialization.json.put
 
 class MobileConversationContextTest {
     @Test
-    fun `task model uses 256k fallback without inheriting the default profile`() {
+    fun `task model uses 128k fallback without inheriting the default profile`() {
         val config = DirectApiConfig(
             displayName = "test",
             baseUrl = "https://example.com/v1",
@@ -1059,7 +1059,7 @@ class MobileConversationContextTest {
     }
 
     @Test
-    fun `bounded 256k unknown-model fallback is sendable but larger unverified windows are rejected`() {
+    fun `bounded 128k unknown-model fallback is sendable but larger unverified windows are rejected`() {
         val fallbackBinding = testBinding().copy(
             contextWindowTokens = DirectApiConfig.DEFAULT_CONTEXT_WINDOW_TOKENS,
             tokenCounterId = MobileFallbackUtf8ByteTokenCounter.counterId,

@@ -477,7 +477,7 @@ function CharactersPage({ projectId }: CharactersPageProps) {
     const characterId = target.characterId
     try {
       await apiClient.delete(`/projects/${projectId}/characters/${characterId}`)
-      message.success('角色已删除')
+      message.success('角色已移至回收站，7 天内可恢复')
       if (editorTargetRef.current.mode === 'view' && editorTargetRef.current.characterId === characterId) {
         changeEditorTarget({ mode: 'empty' })
       }
@@ -507,7 +507,7 @@ function CharactersPage({ projectId }: CharactersPageProps) {
       .map((edge) => ({ source_character_id: edge.from, target_character_id: edge.to, relationship_type: edge.relationship_type, description: edge.description }))
     try {
       const res = await apiClient.put<ApiResponse<RelationshipNetwork>>(`/projects/${projectId}/characters/${selectedId}/relationships`, { relationships: remaining })
-      setNetwork(res.data.data); message.success('关系已移除')
+      setNetwork(res.data.data); message.success('关系已移至回收站，7 天内可恢复')
     } catch (err: any) { message.error(err.message || '移除关系失败') }
   }
 
@@ -682,7 +682,7 @@ function CharactersPage({ projectId }: CharactersPageProps) {
                 <Button danger icon={<DeleteOutlined />} onClick={() => {
                   Modal.confirm({
                     title: '确认删除角色',
-                    content: '该角色的关系、版本和出场记录也会被删除，此操作不可恢复。',
+                    content: '该角色的关系、版本和出场记录将一并移至回收站，7 天内可恢复。',
                     okText: '删除',
                     cancelText: '取消',
                     okButtonProps: { danger: true },

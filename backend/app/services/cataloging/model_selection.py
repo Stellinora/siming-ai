@@ -4,7 +4,6 @@ from __future__ import annotations
 from ...ai.local_cli_adapter import is_local_cli_provider
 from ...modules.model_runtime.application.execution import model_executor as LLMGateway
 from ...modules.model_runtime.domain.configuration import TaskModelSelection
-from .constants import CATALOGING_NON_THINKING_PROVIDERS
 
 
 def cataloging_model_selection(model_override: str | None = None) -> TaskModelSelection:
@@ -26,8 +25,6 @@ def cataloging_extra_body(
 ) -> dict | None:
     provider = (model or "").split(":", 1)[0].lower()
     base: dict | None = {"moshu_task_type": "cataloging"}
-    if provider in CATALOGING_NON_THINKING_PROVIDERS:
-        base["thinking"] = {"type": "disabled"}
     if model == "local_llama_cpp:qwen3.8-27b-q3":
         # Cataloging has a fixed tool set. Its prior thinking turn generated
         # 9,732 tokens over 315 seconds before making a four-record repair;

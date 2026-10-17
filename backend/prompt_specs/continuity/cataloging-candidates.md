@@ -52,6 +52,7 @@ coverage_manifest 五字段齐全：scene_count、characters、worldbuilding、r
 
 【提交与修正】
 使用 save_external_cataloging_candidates 的原生 candidates 数组，type 与字段在同一层；不输出 JSONL，不序列化嵌套数组。
+保存候选必须是本模型步骤唯一的工具调用，不能与读取或另一次保存同批；多个只读工具可以同批。整批被拒绝时所有调用均未执行，按回执重新选择下一步。
 先保存摘要，再依据回执提交依赖它的候选；只使用本步实际提供的工具和字段格式。
 若提供 select_cataloging_candidate_types，每次只选一类；该格式持续开放，同类可分批提交，换类时重新选择。不能把不同类型混入同一批。
 中间批次 finalize=false；计划完整后 candidates=[]、finalize=true。只有完整计划通过校验才会应用，工具可见不代表计划已完整。

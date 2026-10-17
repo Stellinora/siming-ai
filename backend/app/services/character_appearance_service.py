@@ -47,69 +47,70 @@ def remove_character_chapter_appearance(
     )
     if appearance is None:
         raise NotFoundError("该角色没有此章节关联")
-    db.delete(appearance)
+    from app.services.recycle_bin import capture_deletion
+    with capture_deletion(db, appearance):
+        db.delete(appearance)
 
-    chapter_outline_ids = {
-        node_id
-        for (node_id,) in (
-            db.query(OutlineNode.id)
-            .filter(
-                OutlineNode.project_id == project_id,
-                (
-                    (OutlineNode.source_chapter_id == chapter_id)
-                    | (OutlineNode.id == chapter.outline_node_id)
-                ),
+        chapter_outline_ids = {
+            node_id
+            for (node_id,) in (
+                db.query(OutlineNode.id)
+                .filter(
+                    OutlineNode.project_id == project_id,
+                    (
+                        (OutlineNode.source_chapter_id == chapter_id)
+                        | (OutlineNode.id == chapter.outline_node_id)
+                    ),
+                )
+                .all()
             )
-            .all()
-        )
-    }
-    removed_outline_links = 0
-    if chapter_outline_ids:
-        removed_outline_links = (
-            db.query(OutlineNodeCharacter)
-            .filter(
+        }
+        removed_outline_links = 0
+        if chapter_outline_ids:
+            links = db.query(OutlineNodeCharacter).filter(
                 OutlineNodeCharacter.character_id == character_id,
                 OutlineNodeCharacter.outline_node_id.in_(chapter_outline_ids),
-            )
-            .delete(synchronize_session=False)
-        )
+            ).all()
+            removed_outline_links = len(links)
+            for link in links:
+                db.delete(link)
 
-    db.flush()
-    if character.last_seen_chapter_id == chapter_id:
-        prior_appearance = (
-            db.query(Chapter)
-            .join(ChapterCharacter, ChapterCharacter.chapter_id == Chapter.id)
-            .filter(
-                Chapter.project_id == project_id,
-                ChapterCharacter.character_id == character_id,
+        db.flush()
+        if character.last_seen_chapter_id == chapter_id:
+            prior_appearance = (
+                db.query(Chapter)
+                .join(ChapterCharacter, ChapterCharacter.chapter_id == Chapter.id)
+                .filter(
+                    Chapter.project_id == project_id,
+                    ChapterCharacter.character_id == character_id,
+                )
+                .order_by(Chapter.sort_order.desc(), Chapter.created_at.desc())
+                .first()
             )
-            .order_by(Chapter.sort_order.desc(), Chapter.created_at.desc())
-            .first()
-        )
-        character.last_seen_chapter_id = prior_appearance.id if prior_appearance else None
-    if character.last_updated_chapter_id == chapter_id:
-        prior_version = (
-            db.query(CharacterVersion)
-            .filter(
-                CharacterVersion.character_id == character_id,
-                CharacterVersion.source_chapter_id.is_not(None),
-                CharacterVersion.source_chapter_id != chapter_id,
+            character.last_seen_chapter_id = prior_appearance.id if prior_appearance else None
+        if character.last_updated_chapter_id == chapter_id:
+            prior_version = (
+                db.query(CharacterVersion)
+                .filter(
+                    CharacterVersion.character_id == character_id,
+                    CharacterVersion.source_chapter_id.is_not(None),
+                    CharacterVersion.source_chapter_id != chapter_id,
+                )
+                .order_by(CharacterVersion.version_number.desc())
+                .first()
             )
-            .order_by(CharacterVersion.version_number.desc())
-            .first()
-        )
-        character.last_updated_chapter_id = (
-            prior_version.source_chapter_id if prior_version else None
-        )
+            character.last_updated_chapter_id = (
+                prior_version.source_chapter_id if prior_version else None
+            )
 
-    return {
-        "character_id": character_id,
-        "chapter_id": chapter_id,
-        "removed_chapter_links": 1,
-        "removed_outline_links": removed_outline_links,
-        "last_seen_chapter_id": character.last_seen_chapter_id,
-        "last_updated_chapter_id": character.last_updated_chapter_id,
-    }
+        return {
+            "character_id": character_id,
+            "chapter_id": chapter_id,
+            "removed_chapter_links": 1,
+            "removed_outline_links": removed_outline_links,
+            "last_seen_chapter_id": character.last_seen_chapter_id,
+            "last_updated_chapter_id": character.last_updated_chapter_id,
+        }
 
 
 def upsert_character_chapter_appearance(

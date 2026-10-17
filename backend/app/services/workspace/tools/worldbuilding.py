@@ -155,7 +155,8 @@ async def delete_worldbuilding_entry(
     title = entry.title
     project = db.query(Project).filter(Project.id == project_id).first()
     content_file_path = entry.content_file_path
-    db.delete(entry)
+    from app.services.recycle_bin import delete_to_recycle
+    delete_to_recycle(db, entry)
     if project:
         queue_content_sync(
             db,

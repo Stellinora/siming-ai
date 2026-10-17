@@ -150,12 +150,12 @@ def test_unverified_budget_cannot_be_used_as_hard_capacity() -> None:
     assert caught.value.code is ConversationContextErrorCode.CAPACITY_UNKNOWN
 
 
-def test_bounded_256k_fallback_is_sendable_without_becoming_verified() -> None:
+def test_bounded_128k_fallback_is_sendable_without_becoming_verified() -> None:
     counter = FallbackUtf8ByteTokenCounter()
     binding = _binding(
         assurance=CapacityAssurance.UNVERIFIED,
         counter_id=counter.counter_id,
-        context_window=256_000,
+        context_window=128_000,
         max_output=16_000,
     )
     budget = build_request_budget(

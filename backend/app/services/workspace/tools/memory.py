@@ -168,7 +168,8 @@ async def forget(
             return {"tool": "forget", "status": "error", "detail": "未找到该记忆"}
         delete_source_index(db, project_id, "assistant_memory", memory.id)
         key_deleted = memory.key
-        db.delete(memory)
+        from app.services.recycle_bin import delete_to_recycle
+        delete_to_recycle(db, memory)
         commit_session(db)
         return {"tool": "forget", "status": "ok", "detail": f"已删除记忆「{key_deleted}」", "data": {"id": memory_id, "key": key_deleted}}
 
@@ -183,7 +184,8 @@ async def forget(
         )
         for m in targets:
             delete_source_index(db, project_id, "assistant_memory", m.id)
-            db.delete(m)
+            from app.services.recycle_bin import delete_to_recycle
+            delete_to_recycle(db, m)
         commit_session(db)
         if targets:
             return {"tool": "forget", "status": "ok", "detail": f"已删除 {len(targets)} 条匹配「{key}」的记忆", "data": {"key": key, "deleted_count": len(targets)}}

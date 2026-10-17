@@ -2,6 +2,7 @@ package com.siming.mobile.data.authoring
 
 import androidx.room.withTransaction
 import com.siming.mobile.data.agent.mobileChapterPayloadForSave
+import com.siming.mobile.data.agent.characterToolAiConfig
 import com.siming.mobile.data.cataloging.catalogingHash
 import com.siming.mobile.data.cataloging.catalogingId
 import com.siming.mobile.data.local.*
@@ -81,6 +82,12 @@ internal class LocalAuthoringStore(private val database: SimingDatabase) {
         }
         val mutationId = enqueue(projectId, type, id, PcApiPayloads.syncMutation(type, payload, projectId, id).toString(), current?.revision ?: 0)
         receipt(projectId, mutationId, dao.projectPackageSnapshot(projectId).filter { it != before[it.key] })
+        if (type == "character" && ("ai_config" in input || "custom_system_prompt" in input)) {
+            val existingConfig = read.records(projectId, "character_ai_config").firstOrNull { it.text("character_id") == id }
+            characterToolAiConfig(input, id, existingConfig)?.let { config ->
+                save(projectId, "character_ai_config", existingConfig?.text("id") ?: UUID.randomUUID().toString(), config)
+            }
+        }
         id
     }
 
@@ -185,7 +192,11 @@ internal class LocalAuthoringStore(private val database: SimingDatabase) {
         if (row.operation == "delete") return@withTransaction
         require(!row.conflicted) { "请先处理这条资料的版本分岔" }
         read.requireEntity(projectId, type, id)
+        val recycler = LocalRecycleStore(database)
+        recycler.requireInactive(projectId)
         val before = dao.projectPackageSnapshot(projectId).associateBy { it.key }
+        val beforeRuns = dao.catalogingRuns(projectId)
+        dao.sealCatalogingSourceMutations(projectId, UUID.randomUUID().toString())
         if (type == "chapter") LocalCatalogingRollback(database).rollback(projectId, id)
         val deletedIds = mutableSetOf(id)
         if (type == "outline") {
@@ -221,6 +232,7 @@ internal class LocalAuthoringStore(private val database: SimingDatabase) {
         }
         val mutation = enqueue(projectId, type, id, null, row.revision, "delete")
         receipt(projectId, mutation, dao.projectPackageSnapshot(projectId).filter { it != before[it.key] })
+        recycler.captureChanges(mutation, row, before.values.toList(), beforeRuns)
     }
 
     private suspend fun receipt(projectId: String, id: String, changes: List<ReplicaEntity>) {
@@ -236,6 +248,7 @@ internal class LocalAuthoringStore(private val database: SimingDatabase) {
     }.toSet()
 
     suspend fun acknowledge(mutation: OutboxMutation) {
+        dao.acknowledgeRecycleRestore(mutation.mutationId)
         val key = ReplicaEntity.key(mutation.projectId, "local_receipt", mutation.mutationId)
         val receipt = dao.entity(key) ?: return
         (receipt.payload()["local_changes"] as? JsonArray).orEmpty().forEach { value ->
@@ -246,8 +259,7 @@ internal class LocalAuthoringStore(private val database: SimingDatabase) {
         dao.saveEntity(receipt.copy(dirty = false, operation = "delete"))
     }
 
-    internal suspend fun command(projectId: String, name: String, arguments: JsonObject, expected: JsonObject, changes: List<ReplicaEntity>) {
-        val id = UUID.randomUUID().toString()
+    internal suspend fun command(projectId: String, name: String, arguments: JsonObject, expected: JsonObject, changes: List<ReplicaEntity>, id: String = UUID.randomUUID().toString()) {
         dao.sealCatalogingSourceMutations(projectId, id)
         val request = buildJsonObject { put("command", name); put("arguments", arguments); put("expected", expected) }
         val local = JsonObject(request + ("local_changes" to JsonArray(changes.map { row -> buildJsonObject {
@@ -281,12 +293,15 @@ internal class LocalAuthoringStore(private val database: SimingDatabase) {
         require(old.text("status") in setOf("pending", "generated")) { "章节草稿已经处理或失效" }
         require(status in setOf("saved", "discarded")) { "草稿状态无效" }
         val chapter = if (status == "saved") read.requireEntity(projectId, "chapter", requireNotNull(chapterId)) else null
+        val recycleBefore = dao.projectPackageSnapshot(projectId)
+        val recycleId = UUID.randomUUID().toString()
         val updated = JsonObject(old + buildJsonObject { put("status", status); put("updated_at", Instant.now().toString()); if (chapterId != null) put("saved_chapter_id", chapterId) })
         put(projectId, "chapter_draft", draftId, updated, true)
         command(projectId, "chapter_draft_status", buildJsonObject {
             put("draft_id", draftId); put("status", status)
             if (chapter != null) { put("saved_chapter_id", chapterId); put("saved_content_hash", catalogingHash(chapter.text("content"))) }
-        }, buildJsonObject { put("content_hash", catalogingHash(old.text("content"))) }, listOf(requireNotNull(dao.entity(row.key))))
+        }, buildJsonObject { put("content_hash", catalogingHash(old.text("content"))) }, listOf(requireNotNull(dao.entity(row.key))), id = recycleId)
+        if (status == "discarded") LocalRecycleStore(database).captureChanges(recycleId, row, recycleBefore, emptyList())
         true
     }
 
@@ -332,6 +347,8 @@ internal class LocalAuthoringStore(private val database: SimingDatabase) {
 
     suspend fun replaceRelationships(projectId: String, characterId: String, relations: JsonArray): JsonObject = database.withTransaction {
         read.requireEntity(projectId, "character", characterId)
+        val old = dao.projectSnapshot(projectId).filter { it.entityType == "character_relation" &&
+            it.payload().let { p -> characterId in listOf(p.text("from"), p.text("to"), p.text("character_a_id"), p.text("character_b_id")) } }
         val pairs = mutableSetOf<Pair<String, String>>()
         val normalized = relations.map { raw ->
             val row = raw.jsonObject
@@ -339,23 +356,32 @@ internal class LocalAuthoringStore(private val database: SimingDatabase) {
             require(characterId == from || characterId == to) { "提交的关系必须连接当前角色" }
             require(from != to && pairs.add(from to to)) { "不能提交自关联或重复的有向关系" }
             read.requireEntity(projectId, "character", from); read.requireEntity(projectId, "character", to)
-            buildJsonObject { put("id", catalogingId("character_relationship", projectId, from, to)); put("from", from); put("to", to); put("relationship_type", row.text("relationship_type").ifBlank { "related" }); put("description", row.text("description")) }
+            val explicit = row.text("id").takeIf(String::isNotBlank)
+            val existing = if (explicit != null) requireNotNull(old.firstOrNull { it.entityId == explicit }) { "关系 ID 不属于当前角色" }
+                else old.firstOrNull { it.payload().let { p -> p.text("from").ifBlank { p.text("character_a_id") } == from && p.text("to").ifBlank { p.text("character_b_id") } == to } }
+            val id = existing?.entityId ?: catalogingId("character_relationship", projectId, from, to)
+            buildJsonObject { put("id", id); put("from", from); put("to", to); put("relationship_type", row.text("relationship_type").ifBlank { "related" }); put("description", row.text("description")) }
         }
+        require(normalized.map { it.text("id") }.distinct().size == normalized.size) { "关系 ID 不能重复" }
         val before = relationshipGuard(read.relationshipNetwork(projectId), characterId)
-        val old = dao.projectSnapshot(projectId).filter { it.entityType == "character_relation" &&
-            it.payload().let { p -> characterId in listOf(p.text("from"), p.text("to"), p.text("character_a_id"), p.text("character_b_id")) } }
+        val retained = normalized.map { it.text("id") }.toSet()
+        val removed = old.filter { it.entityId !in retained }
         val changed = mutableListOf<ReplicaEntity>()
-        old.forEach { row ->
+        removed.forEach { row ->
             val deleted = row.copy(operation = "delete", payloadJson = null, contentHash = catalogingHash("null"), dirty = true)
             dao.saveEntity(deleted); changed += deleted
         }
         normalized.forEach { edge ->
-            val id = catalogingId("character_relationship", projectId, edge.text("from"), edge.text("to"))
-            put(projectId, "character_relation", id, JsonObject(edge + mapOf("id" to JsonPrimitive(id), "project_id" to JsonPrimitive(projectId), "_record_type" to JsonPrimitive("character_relationship"))), true)
+            val id = edge.text("id")
+            val original = old.firstOrNull { it.entityId == id }?.payload().orEmpty()
+            put(projectId, "character_relation", id, JsonObject(original + edge + mapOf("id" to JsonPrimitive(id), "project_id" to JsonPrimitive(projectId), "_record_type" to JsonPrimitive("character_relationship"))), true)
             changed += requireNotNull(dao.entity(ReplicaEntity.key(projectId, "character_relation", id)))
         }
+        val commandId = UUID.randomUUID().toString()
         command(projectId, "character_relationships", buildJsonObject { put("character_id", characterId); put("relationships", JsonArray(normalized)) },
-            buildJsonObject { put("relationships", before) }, changed.distinctBy { it.key }.map { requireNotNull(dao.entity(it.key)) })
+            buildJsonObject { put("relationships", before) }, changed.distinctBy { it.key }.map { requireNotNull(dao.entity(it.key)) }, id = commandId)
+        if (removed.isNotEmpty()) LocalRecycleStore(database).capture(commandId, projectId, "character_relation", removed.first().entityId,
+            "角色关系（${removed.size} 条）", RecycleSnapshot(before = removed, after = removed.map { requireNotNull(dao.entity(it.key)) }))
         read.relationshipNetwork(projectId)
     }
 }
