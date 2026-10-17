@@ -10,6 +10,7 @@ import httpx
 import pytest
 from openai import NotFoundError, PermissionDeniedError
 
+from app.ai.gateway import LLMGateway
 from app.ai.openai_adapter import OpenAIAdapter
 from app.core.exceptions import LLMError
 from app.modules.model_runtime.application.verification import ModelProbeRequest
@@ -414,12 +415,14 @@ def test_responses_stream_preserves_incomplete_terminal_state_for_gateway_resume
     assert chunks[-1]["finish_reason"] == "incomplete"
 
 
-def test_chat_streams_ignore_empty_choice_chunks_and_keep_usage():
+def test_chat_streams_keep_activity_internal_and_preserve_usage():
     usage = SimpleNamespace(prompt_tokens=3, completion_tokens=2, total_tokens=5)
 
     async def text_events():
         yield SimpleNamespace(choices=[])
-        yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="hello"))])
+        yield SimpleNamespace(choices=[SimpleNamespace(
+            delta=SimpleNamespace(content="hello"), finish_reason="stop",
+        )])
 
     async def tool_events():
         yield SimpleNamespace(choices=[], usage=usage)
@@ -432,7 +435,7 @@ def test_chat_streams_ignore_empty_choice_chunks_and_keep_usage():
         )
 
     text_client = MagicMock()
-    text_client.chat.completions.create = AsyncMock(return_value=text_events())
+    text_client.chat.completions.create = AsyncMock(side_effect=lambda **kwargs: text_events())
     tool_client = MagicMock()
     tool_client.chat.completions.create = AsyncMock(return_value=tool_events())
 
@@ -450,8 +453,23 @@ def test_chat_streams_ignore_empty_choice_chunks_and_keep_usage():
             model="gpt-test",
         )]
 
+    async def collect_public_text():
+        return [chunk async for chunk in LLMGateway.stream_chat_completion(
+            messages=[{"role": "user", "content": "work"}], model="openai:gpt-test",
+            retry=1, resume=0,
+        )]
+
     with patch("app.ai.openai_adapter.AsyncOpenAI", return_value=text_client):
-        assert asyncio.run(collect_text()) == ["hello"]
+        internal_chunks = asyncio.run(collect_text())
+        assert "" in internal_chunks  # Transport activity resets the gateway idle timer.
+        assert [chunk for chunk in internal_chunks if chunk] == ["hello"]
+        with (
+            patch.object(LLMGateway, "_parse_model", return_value=("openai", "gpt-test")),
+            patch.object(LLMGateway, "_load_config", return_value=SimpleNamespace(
+                api_key="secret", base_url=None,
+            )),
+        ):
+            assert asyncio.run(collect_public_text()) == ["hello"]
     with patch("app.ai.openai_adapter.AsyncOpenAI", return_value=tool_client):
         chunks = asyncio.run(collect_tools())
 
