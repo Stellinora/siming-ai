@@ -1,4 +1,7 @@
+import type { OutfitId } from './poses/contract'
+
 export interface DesktopPetSettings {
+  desktop_pet_outfit: OutfitId
   desktop_pet_enabled: boolean
   desktop_pet_scale: number
   desktop_pet_opacity: number
@@ -10,6 +13,7 @@ export interface DesktopPetSettings {
 
 export type DesktopPetSettingsPatch = Partial<Pick<
   DesktopPetSettings,
+  | 'desktop_pet_outfit'
   | 'desktop_pet_enabled'
   | 'desktop_pet_scale'
   | 'desktop_pet_opacity'
@@ -18,6 +22,7 @@ export type DesktopPetSettingsPatch = Partial<Pick<
 >>
 
 export const DEFAULT_DESKTOP_PET_SETTINGS: DesktopPetSettings = {
+  desktop_pet_outfit: 'classic',
   desktop_pet_enabled: true,
   desktop_pet_scale: 0.8,
   desktop_pet_opacity: 0.96,

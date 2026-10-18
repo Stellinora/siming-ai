@@ -83,7 +83,11 @@ def normalize_desktop_pet_settings(settings: Mapping[str, object] | None = None)
     """Return the canonical fixed-character desktop-pet preferences."""
 
     source = settings or {}
+    outfit = source.get("desktop_pet_outfit", "classic")
+    if outfit not in ("classic", "casual"):
+        raise ValueError("Unknown desktop pet outfit")
     return {
+        "desktop_pet_outfit": outfit,
         "desktop_pet_enabled": _boolean_setting(source, "desktop_pet_enabled", True),
         "desktop_pet_scale": _bounded_number(
             source.get("desktop_pet_scale"),

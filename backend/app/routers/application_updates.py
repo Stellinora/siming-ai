@@ -42,6 +42,7 @@ class LauncherSettingsUpdateRequest(BaseModel):
     gateway_advertised_url: str | None = Field(default=None, max_length=2048)
     gateway_allowed_hosts: str | None = Field(default=None, max_length=4096)
     desktop_pet_enabled: bool | None = None
+    desktop_pet_outfit: Literal["classic", "casual"] | None = None
     desktop_pet_scale: float | None = Field(
         default=None,
         ge=DESKTOP_PET_MIN_SCALE,

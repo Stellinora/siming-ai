@@ -665,6 +665,7 @@ class LauncherDataDirectoryTestCase(unittest.TestCase):
                 response = config.update_launcher_settings(
                     config.LauncherSettingsUpdateRequest(
                         desktop_pet_enabled=True,
+                        desktop_pet_outfit="casual",
                         desktop_pet_scale=1.2,
                         desktop_pet_opacity=0.8,
                         desktop_pet_muted=False,
@@ -673,6 +674,7 @@ class LauncherDataDirectoryTestCase(unittest.TestCase):
                 )
 
             self.assertTrue(response.data["desktop_pet_enabled"])
+            self.assertEqual(response.data["desktop_pet_outfit"], "casual")
             self.assertEqual(response.data["desktop_pet_scale"], 1.2)
             self.assertEqual(response.data["desktop_pet_opacity"], 0.8)
             self.assertFalse(response.data["desktop_pet_muted"])
@@ -681,6 +683,27 @@ class LauncherDataDirectoryTestCase(unittest.TestCase):
             self.assertEqual(response.data["desktop_pet_runtime_active"], os.name == "nt")
             saved = launcher._load_launcher_settings(home)
             self.assertEqual(saved["desktop_pet_scale"], 1.2)
+            self.assertEqual(saved["desktop_pet_outfit"], "casual")
+
+    def test_desktop_pet_outfit_defaults_and_validation_share_the_authoritative_settings(self):
+        self.assertEqual(application_settings.normalize_desktop_pet_settings({})["desktop_pet_outfit"], "classic")
+        for value in ("other", "", None, 2, {}, []):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                application_settings.normalize_desktop_pet_settings({"desktop_pet_outfit": value})
+        for value in ("other", "", 2, {}, []):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                config.LauncherSettingsUpdateRequest(desktop_pet_outfit=value)
+
+    def test_casual_outfit_is_saved_without_a_pc_webview_running(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.dict(os.environ, {
+                "SIMING_HOME": temp_dir, "SIMING_DESKTOP_WEBVIEW": "0",
+                "SIMING_RUNTIME_PROFILE": "gateway", "SIMING_GATEWAY_HEADLESS": "1",
+            }):
+                response = config.update_launcher_settings(config.LauncherSettingsUpdateRequest(desktop_pet_outfit="casual"))
+                self.assertEqual(response.data["desktop_pet_outfit"], "casual")
+                self.assertFalse(response.data["desktop_pet_runtime_active"])
+                self.assertEqual(application_settings.launcher_settings_payload()["desktop_pet_outfit"], "casual")
 
     def test_desktop_pet_availability_respects_platform_and_runtime(self):
         with tempfile.TemporaryDirectory() as temp_dir:

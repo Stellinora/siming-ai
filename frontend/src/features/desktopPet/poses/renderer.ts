@@ -1,4 +1,4 @@
-import { manifest, poseArtRect, type Pose } from './contract'
+import { manifest, poseArtRect, poseFrameFile, type Pose } from './contract'
 import type { PoseMotion } from './motion'
 
 // The same connected mesh and local-eye masks approved in the pose study.
@@ -11,6 +11,7 @@ export class PoseRenderer {
   private readonly textures = new Map<string, WebGLTexture>()
   private readonly uniforms: Record<string, WebGLUniformLocation | null>
   private readonly vertexCount: number
+  private rasterScale = 1
   private disposed = false
 
   constructor(images: Map<string, HTMLImageElement>) {
@@ -27,6 +28,7 @@ export class PoseRenderer {
       uniform vec2 size;
       uniform vec3 movement;
       uniform vec2 anchors;
+      uniform vec3 rotation;
       uniform vec4 artRect;
       varying vec2 uv;
       varying vec2 artPoint;
@@ -35,7 +37,12 @@ export class PoseRenderer {
         artPoint=position;
         float upper=1.0-smoothstep(min(anchors.y-20.0,480.0),540.0,position.y);
         float head=1.0-smoothstep(anchors.x-8.0,anchors.x+85.0,position.y);
-        vec2 p=position+vec2(movement.x*upper,movement.y*head+movement.z*upper);
+        float angle=rotation.x*head;
+        vec2 d=position-vec2(192.0,anchors.x);
+        vec2 p=vec2(192.0,anchors.x)+vec2(cos(angle)*d.x-sin(angle)*d.y,sin(angle)*d.x+cos(angle)*d.y)
+          +vec2(movement.x*upper,movement.y*head+movement.z*upper);
+        vec2 held=p-vec2(192.0,rotation.z);
+        p=vec2(192.0,rotation.z)+vec2(cos(rotation.y)*held.x-sin(rotation.y)*held.y,sin(rotation.y)*held.x+cos(rotation.y)*held.y);
         gl_Position=vec4(p.x/size.x*2.0-1.0,1.0-p.y/size.y*2.0,0.0,1.0);
       }`
     const fragment = `
@@ -48,10 +55,11 @@ export class PoseRenderer {
       uniform vec4 eyeA;
       uniform vec4 eyeB;
       uniform vec2 eyeAngles;
+      uniform float eyeFeather;
       float eyeWeight(vec2 point, vec4 region, float angle) {
         vec2 d=point-region.xy;
         vec2 p=vec2(cos(angle)*d.x+sin(angle)*d.y,-sin(angle)*d.x+cos(angle)*d.y)/region.zw;
-        return 1.0-smoothstep(0.94,1.0,max(abs(p.x),abs(p.y)));
+        return 1.0-smoothstep(1.0-eyeFeather,1.0,max(abs(p.x),abs(p.y)));
       }
       void main(){
         if(any(lessThan(uv,vec2(0.0))) || any(greaterThan(uv,vec2(1.0)))) discard;
@@ -97,15 +105,14 @@ export class PoseRenderer {
       const attribute = gl.getAttribLocation(program, 'position')
       gl.enableVertexAttribArray(attribute)
       gl.vertexAttribPointer(attribute, 2, gl.FLOAT, false, 0, 0)
-      this.uniforms = Object.fromEntries(['size', 'movement', 'anchors', 'artRect', 'localEyes', 'eyeA', 'eyeB', 'eyeAngles']
+      this.uniforms = Object.fromEntries(['size', 'movement', 'anchors', 'rotation', 'artRect', 'localEyes', 'eyeA', 'eyeB', 'eyeAngles', 'eyeFeather']
         .map(id => [id, gl.getUniformLocation(program, id)]))
       gl.uniform2f(this.uniforms.size, manifest.width, manifest.height)
       gl.uniform1i(gl.getUniformLocation(program, 'baseArt'), 0)
       gl.uniform1i(gl.getUniformLocation(program, 'frameArt'), 1)
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true)
-      for (const file of Object.keys(manifest.sha256)) {
-        const image = images.get(file)
-        if (!image) throw new Error(`Missing pose frame: ${file}`)
+      // Only the selected outfit is uploaded; outfits share this renderer.
+      for (const [file, image] of images) {
         const texture = gl.createTexture()
         if (!texture) throw new Error('无法分配桌宠纹理。')
         this.textures.set(file, texture)
@@ -126,10 +133,22 @@ export class PoseRenderer {
     }
   }
 
-  draw(pose: Pose, motion: PoseMotion) {
-    const gl = this.gl, texture = this.textures.get(pose.files[motion.frame])
+  draw(pose: Pose, motion: PoseMotion, pixelDensity = 1) {
+    if (!Number.isFinite(pixelDensity) || pixelDensity <= 0) throw new RangeError('Invalid pose pixel density')
+    const gl = this.gl, texture = this.textures.get(poseFrameFile(pose, motion.frame))
     if (!texture) throw new Error(`Missing pose frame: ${pose.id}/${motion.frame}`)
     if (gl.isContextLost()) throw new Error('桌宠图形上下文已丢失，请重新打开桌宠。')
+    // Upgrade at most once, on demand. Keep the larger target when a size
+    // slider crosses back over the threshold, avoiding repeated allocation.
+    // Logical coordinates, textures and the character's on-screen size stay
+    // unchanged; high-DPI pickup art no longer takes a low-resolution detour.
+    const scale = Math.min(2, Math.max(1, Math.ceil(pixelDensity)))
+    if (scale > this.rasterScale) {
+      this.rasterScale = scale
+      this.canvas.width = manifest.width * scale
+      this.canvas.height = manifest.height * scale
+      gl.viewport(0, 0, this.canvas.width, this.canvas.height)
+    }
     gl.clear(gl.COLOR_BUFFER_BIT)
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, this.textures.get(pose.files[0])!)
@@ -141,12 +160,14 @@ export class PoseRenderer {
     if (pose.frameMode === 'local_eyes') {
       if (!pose.eyeRegions) throw new Error(`Missing eye masks: ${pose.id}`)
       const [a, b] = pose.eyeRegions
+      gl.uniform1f(this.uniforms.eyeFeather, pose.eyeFeather ?? 0.06)
       gl.uniform4f(this.uniforms.eyeA, a[0], a[1], a[2], a[3])
       gl.uniform4f(this.uniforms.eyeB, b[0], b[1], b[2], b[3])
       gl.uniform2f(this.uniforms.eyeAngles, a[4] * Math.PI / 180, b[4] * Math.PI / 180)
     }
     gl.uniform3f(this.uniforms.movement, motion.lean, motion.nod, motion.breath)
     gl.uniform2f(this.uniforms.anchors, pose.neckY, pose.hipY)
+    gl.uniform3f(this.uniforms.rotation, motion.headTilt, motion.suspension, pose.visibleBounds[1] + 24)
     gl.drawArrays(gl.TRIANGLES, 0, this.vertexCount)
     return this.canvas
   }

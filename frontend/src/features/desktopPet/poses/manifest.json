@@ -1,30 +1,412 @@
 {
-  "version": "poses-pickup-20260929",
+  "version": "poses-outfits-20261012",
   "width": 384,
   "height": 576,
   "floor": 560,
-  "poses": [
-    {"id":"standing","label":"抱书待机","files":["standing-0.webp","standing-1.webp","standing-2.webp","standing-3.webp","standing-4.webp"],"frameMode":"whole_sprite","neckY":267,"hipY":421,"visibleBounds":[54,71,331,560]},
-    {"id":"reading","label":"低头读书","files":["reading.webp","reading-half.webp","reading-closed.webp"],"frameMode":"local_eyes","neckY":266.82105263157894,"hipY":409.24210526315784,"visibleBounds":[67,97,317,560],"eyeRegions":[[124.08947368421053,236.25263157894733,17.36842105263158,15.28421052631579,18],[173.06842105263158,233.8210526315789,24.315789473684212,17.02105263157895,-9]]},
-    {"id":"peeking","label":"贴边偷看","files":["peeking.webp","peeking-half.webp","peeking-closed.webp"],"frameMode":"local_eyes","neckY":256.88,"hipY":390.8,"visibleBounds":[41,71,342,560],"eyeRegions":[[210.36,200,21.96,17.28,22],[270.48,222.32,20.16,16.92,22]],"edge":{"boundaryX":220.44,"visibleStripBounds":[220,71,342,405]}},
-    {"id":"dozing","label":"坐着打盹","files":["dozing.webp"],"frameMode":"whole_sprite","neckY":397.2077464788732,"hipY":493.07042253521126,"visibleBounds":[23,226,362,560]},
-    {"id":"picked_up","label":"被轻轻拎起","files":["picked-up.png","picked-up-half.png","picked-up-closed.png"],"frameMode":"local_eyes","neckY":250.625,"hipY":421.8125,"visibleBounds":[43.70625,62.9375,340.29375,560],"source":{"width":1024,"height":1536,"scale":0.4125,"x":-26.00625,"y":9.3125},"eyeRegions":[[142.70625,206.4875,22.6875,20.625,-17],[206.23125,183.8,23.1,21.45,-17]]}
+  "defaultOutfit": "classic",
+  "outfits": [
+    {
+      "id": "classic",
+      "label": "经典长袍",
+      "poses": [
+        {
+          "id": "standing",
+          "label": "抱书待机",
+          "files": [
+            "standing-0.webp",
+            "standing-1.webp",
+            "standing-2.webp",
+            "standing-3.webp",
+            "standing-4.webp"
+          ],
+          "frameMode": "whole_sprite",
+          "neckY": 267,
+          "hipY": 421,
+          "visibleBounds": [
+            54,
+            71,
+            331,
+            560
+          ]
+        },
+        {
+          "id": "reading",
+          "label": "低头读书",
+          "files": [
+            "reading.webp",
+            "reading-half.webp",
+            "reading-closed.webp"
+          ],
+          "frameMode": "local_eyes",
+          "neckY": 266.82105263157894,
+          "hipY": 409.24210526315784,
+          "visibleBounds": [
+            67,
+            97,
+            317,
+            560
+          ],
+          "eyeRegions": [
+            [
+              124.08947368421053,
+              236.25263157894733,
+              17.36842105263158,
+              15.28421052631579,
+              18
+            ],
+            [
+              173.06842105263158,
+              233.8210526315789,
+              24.315789473684212,
+              17.02105263157895,
+              -9
+            ]
+          ]
+        },
+        {
+          "id": "peeking",
+          "label": "贴边偷看",
+          "files": [
+            "peeking.webp",
+            "peeking-half.webp",
+            "peeking-closed.webp"
+          ],
+          "frameMode": "local_eyes",
+          "neckY": 256.88,
+          "hipY": 390.8,
+          "visibleBounds": [
+            41,
+            71,
+            342,
+            560
+          ],
+          "eyeRegions": [
+            [
+              210.36,
+              200,
+              21.96,
+              17.28,
+              22
+            ],
+            [
+              270.48,
+              222.32,
+              20.16,
+              16.92,
+              22
+            ]
+          ],
+          "edge": {
+            "boundaryX": 220.44,
+            "visibleStripBounds": [
+              220,
+              71,
+              342,
+              405
+            ]
+          }
+        },
+        {
+          "id": "dozing",
+          "label": "坐着打盹",
+          "files": [
+            "dozing.webp"
+          ],
+          "frameMode": "whole_sprite",
+          "neckY": 397.2077464788732,
+          "hipY": 493.07042253521126,
+          "visibleBounds": [
+            23,
+            226,
+            362,
+            560
+          ]
+        },
+        {
+          "id": "picked_up",
+          "label": "被轻轻拎起",
+          "files": [
+            "picked-up.png",
+            "picked-up-half.png",
+            "picked-up-closed.png"
+          ],
+          "frameMode": "local_eyes",
+          "neckY": 250.625,
+          "hipY": 421.8125,
+          "visibleBounds": [
+            43.70625,
+            62.9375,
+            340.29375,
+            560
+          ],
+          "source": {
+            "width": 1024,
+            "height": 1536,
+            "scale": 0.4125,
+            "x": -26.00625,
+            "y": 9.3125
+          },
+          "eyeRegions": [
+            [
+              142.70625,
+              206.4875,
+              22.6875,
+              20.625,
+              -17
+            ],
+            [
+              206.23125,
+              183.8,
+              23.1,
+              21.45,
+              -17
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "casual",
+      "label": "朱红常服",
+      "poses": [
+        {
+          "id": "standing",
+          "label": "抱书待机",
+          "files": [
+            "casual-standing.png",
+            "casual-standing-half.png",
+            "casual-standing-closed.png"
+          ],
+          "frameMode": "local_eyes",
+          "neckY": 259.716937,
+          "hipY": 393.974478,
+          "visibleBounds": [
+            49.422274,
+            71,
+            334.577726,
+            560
+          ],
+          "source": {
+            "width": 1024,
+            "height": 1536,
+            "scale": 0.37819,
+            "x": -1.25522,
+            "y": 0.656613
+          },
+          "eyeRegions": [
+            [
+              150.399072,
+              214.712297,
+              27.399884,
+              22.180858,
+              0
+            ],
+            [
+              220.364269,
+              213.577726,
+              28.269722,
+              23.050697,
+              0
+            ]
+          ],
+          "frameMap": [
+            0,
+            1,
+            2,
+            2,
+            1
+          ],
+          "eyeFeather": 0.2
+        },
+        {
+          "id": "reading",
+          "label": "低头读书",
+          "files": [
+            "casual-reading.png",
+            "casual-reading-half.png",
+            "casual-reading-closed.png"
+          ],
+          "frameMode": "local_eyes",
+          "neckY": 260.062594,
+          "hipY": 384.0181,
+          "visibleBounds": [
+            67.346154,
+            97,
+            316.653846,
+            560
+          ],
+          "source": {
+            "width": 1024,
+            "height": 1536,
+            "scale": 0.34917,
+            "x": 6.939668,
+            "y": 47.766968
+          },
+          "eyeRegions": [
+            [
+              126.006787,
+              230.732278,
+              19.274208,
+              15.660294,
+              24
+            ],
+            [
+              173.493967,
+              228.288084,
+              24.895852,
+              16.463386,
+              -8
+            ]
+          ],
+          "eyeFeather": 0.2
+        },
+        {
+          "id": "peeking",
+          "label": "贴边偷看",
+          "files": [
+            "casual-peeking.png",
+            "casual-peeking-half.png",
+            "casual-peeking-closed.png"
+          ],
+          "frameMode": "local_eyes",
+          "neckY": 257.959634,
+          "hipY": 405.069307,
+          "visibleBounds": [
+            38.186596,
+            71,
+            345.813404,
+            560
+          ],
+          "source": {
+            "width": 1024,
+            "height": 1536,
+            "scale": 0.37243,
+            "x": 1.6885,
+            "y": 25.191165
+          },
+          "eyeRegions": [
+            [
+              212.111196,
+              199.115765,
+              27.410815,
+              20.986405,
+              21
+            ],
+            [
+              273.562072,
+              222.951257,
+              26.125933,
+              20.986405,
+              21
+            ]
+          ],
+          "edge": {
+            "boundaryX": 220.677075,
+            "visibleStripBounds": [
+              220.677075,
+              71,
+              345.813404,
+              406.186596
+            ]
+          },
+          "eyeFeather": 0.2
+        },
+        {
+          "id": "dozing",
+          "label": "坐着打盹",
+          "files": [
+            "casual-dozing.png"
+          ],
+          "frameMode": "whole_sprite",
+          "neckY": 392.172448,
+          "hipY": 496.444004,
+          "visibleBounds": [
+            32.778989,
+            226,
+            351.221011,
+            560
+          ],
+          "source": {
+            "width": 1024,
+            "height": 1536,
+            "scale": 0.331021,
+            "x": 21.855302,
+            "y": 92.598612
+          }
+        },
+        {
+          "id": "picked_up",
+          "label": "被轻轻拎起",
+          "files": [
+            "casual-picked-up.png",
+            "casual-picked-up-half.png",
+            "casual-picked-up-closed.png"
+          ],
+          "frameMode": "local_eyes",
+          "neckY": 251.156508,
+          "hipY": 417.341942,
+          "visibleBounds": [
+            42.80656,
+            62.9375,
+            341.19344,
+            560
+          ],
+          "source": {
+            "width": 1024,
+            "height": 1536,
+            "scale": 0.37345,
+            "x": -7.235795,
+            "y": 30.820764
+          },
+          "eyeRegions": [
+            [
+              146.999225,
+              204.848657,
+              27.056482,
+              21.902867,
+              -17
+            ],
+            [
+              211.232696,
+              184.308884,
+              27.056482,
+              21.902867,
+              -17
+            ]
+          ],
+          "eyeFeather": 0.2
+        }
+      ]
+    }
   ],
   "sha256": {
-    "standing-0.webp":"104396bf950af007e19cb34b38c2a66324547694ba0c84273dcf4b051eaba769",
-    "standing-1.webp":"bb19a18c783dfa8d5cde8e7c0941851dcc1cf9cda25daa324eb51987acb3e909",
-    "standing-2.webp":"920d06b4a3c7a78fc370c0dd8b2354b5951332261233066c4f6fa6db7c20631e",
-    "standing-3.webp":"4b677878bceaee26c6d82eaf58835783b6ebadb284fd0ae9911e1b0b7d0496d5",
-    "standing-4.webp":"3db08331f839780fa72c2ac76309e15af25e967c430a95d1478a938e56ff06ad",
-    "reading.webp":"7f8e3267588e8b882ef4c4fc1799e674f2ccb6ee7730e74e7a6d54e61dcc820d",
-    "reading-half.webp":"a298225d563856f8f1115bc16c13eee8a02db07f0f0cdc6f4283b6ebbbf008c1",
-    "reading-closed.webp":"a9e5b484384322f42799969f0b05c550cc4a0d69c0bc8190bc84456b190f24f8",
-    "peeking.webp":"1353db000d525c8f6815d24fe4152be8559603829e8a3e5b7b2e89158ca5aebd",
-    "peeking-half.webp":"85767946b210270f95f3ed39997bd828dde23ce71c21d659872de4b977a92aa7",
-    "peeking-closed.webp":"ada457b02861df8b50925150ff65fccdbd049c269daa717f2eef94d4a32f4a35",
-    "dozing.webp":"b533095afa3e460f6d3cfcfb98a35cfe160b37ed6b4516a5ee156f4f5f95b6ff",
-    "picked-up.png":"b368985ab7e45ec1bc007b61acd674da7f7acf97b43f96b8dbecc8de8f549c36",
-    "picked-up-half.png":"ee8b00e9b5a3d00f9aab89774eb31ba8f667bcc8b72e039904863373a759b56a",
-    "picked-up-closed.png":"9f30251d79dbb359226c9b7ca0be98af327194f63742ab09455919960e645e0d"
+    "standing-0.webp": "104396bf950af007e19cb34b38c2a66324547694ba0c84273dcf4b051eaba769",
+    "standing-1.webp": "bb19a18c783dfa8d5cde8e7c0941851dcc1cf9cda25daa324eb51987acb3e909",
+    "standing-2.webp": "920d06b4a3c7a78fc370c0dd8b2354b5951332261233066c4f6fa6db7c20631e",
+    "standing-3.webp": "4b677878bceaee26c6d82eaf58835783b6ebadb284fd0ae9911e1b0b7d0496d5",
+    "standing-4.webp": "3db08331f839780fa72c2ac76309e15af25e967c430a95d1478a938e56ff06ad",
+    "reading.webp": "7f8e3267588e8b882ef4c4fc1799e674f2ccb6ee7730e74e7a6d54e61dcc820d",
+    "reading-half.webp": "a298225d563856f8f1115bc16c13eee8a02db07f0f0cdc6f4283b6ebbbf008c1",
+    "reading-closed.webp": "a9e5b484384322f42799969f0b05c550cc4a0d69c0bc8190bc84456b190f24f8",
+    "peeking.webp": "1353db000d525c8f6815d24fe4152be8559603829e8a3e5b7b2e89158ca5aebd",
+    "peeking-half.webp": "85767946b210270f95f3ed39997bd828dde23ce71c21d659872de4b977a92aa7",
+    "peeking-closed.webp": "ada457b02861df8b50925150ff65fccdbd049c269daa717f2eef94d4a32f4a35",
+    "dozing.webp": "b533095afa3e460f6d3cfcfb98a35cfe160b37ed6b4516a5ee156f4f5f95b6ff",
+    "picked-up.png": "b368985ab7e45ec1bc007b61acd674da7f7acf97b43f96b8dbecc8de8f549c36",
+    "picked-up-half.png": "ee8b00e9b5a3d00f9aab89774eb31ba8f667bcc8b72e039904863373a759b56a",
+    "picked-up-closed.png": "9f30251d79dbb359226c9b7ca0be98af327194f63742ab09455919960e645e0d",
+    "casual-dozing.png": "3173215cbed0f4996823f3fec8fe8f0991e5b12ab1292421b6e6a2bbb99722d3",
+    "casual-peeking-closed.png": "b7e89129e28e27b0af08001cf3ae8148cd0d3629382a6936ca9e1c23f23b653b",
+    "casual-peeking-half.png": "892971ebefe7f82ffb8f4d085fb93ceedb074fabe0b61af0879039e6d340b072",
+    "casual-peeking.png": "40b2722ba1f6cf6bec8264f25f364177a7cd664480d60f5729bcfd1ef2805843",
+    "casual-picked-up-closed.png": "892afd771c4fb276a27f5695d28cec20156ba71f1955bc46ac985597b0016098",
+    "casual-picked-up-half.png": "3fd619ed1008cb103185d9779502d508d2a256be3a106df00adb2c0c89d233d1",
+    "casual-picked-up.png": "c9fa9b07875bcb744379359cb284ac1a0a8ae7e1954e9e4f8d497e1538f4a4ee",
+    "casual-reading-closed.png": "1ff9266295056b302c86c93a5b5391bc9b17a710d38726009405aeb5833625ef",
+    "casual-reading-half.png": "2af019ce985128b6797c046125ac4a48fedb962714dbff95ebaeff7bc1aebd88",
+    "casual-reading.png": "a8ef9a614cbe069f5ed412c0072100306c388cb47a12f9e3f50239d8c183fdf4",
+    "casual-standing-closed.png": "ee3ee3070b30afcf1d0cbdc31249d765f8830b23f18fd90d8d4101347827736e",
+    "casual-standing-half.png": "9db3fdd506281f3cfd90c22ae2c9d7fd8d8058d265dc39e5c47a13edae76eaa8",
+    "casual-standing.png": "628e4a905e79dde0b9af49f3ee4ee529bc5ed105c094bb5e2868d2e8e4960f50"
   }
 }

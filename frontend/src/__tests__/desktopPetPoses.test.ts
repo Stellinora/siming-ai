@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { manifest, POSE_IDS, poseArtRect, poseById, selectPose } from '../features/desktopPet/poses/contract'
-import { blinkFrame, deformPoint, PoseClock } from '../features/desktopPet/poses/motion'
-import { compactPeekLayout, PEEK_BUBBLE_MAX_HEIGHT, posePlacement } from '../features/desktopPet/poses/placement'
+import { manifest, POSE_IDS, poseArtRect, posesFor, selectPose } from '../features/desktopPet/poses/contract'
+import { blinkFrame, deformPoint, PoseClock, stillPoseMotion } from '../features/desktopPet/poses/motion'
+import { compactPeekLayout, PEEK_BUBBLE_MAX_HEIGHT, poseLookTarget, posePlacement } from '../features/desktopPet/poses/placement'
+
+const poseById = posesFor('classic')
 
 describe('current desktop pet pose contract', () => {
-  it('uses only the current 15 frames and whole poses', () => {
-    expect(manifest.poses.map(pose => pose.id)).toEqual(POSE_IDS)
-    expect(Object.keys(manifest.sha256)).toHaveLength(15)
+  it('keeps both outfits in one pose contract with complete action sets', () => {
+    for (const outfit of manifest.outfits) expect(outfit.poses.map(pose => pose.id)).toEqual(POSE_IDS)
+    expect(Object.keys(manifest.sha256)).toHaveLength(28)
     expect(poseById.reading.frameMode).toBe('local_eyes')
     expect(poseById.peeking.frameMode).toBe('local_eyes')
     expect(poseById.picked_up.frameMode).toBe('local_eyes')
@@ -43,6 +45,36 @@ describe('current desktop pet pose contract', () => {
     expect(blinkFrame(id, 0.25)).toBe(0)
     expect(blinkFrame(id, 8.1)).toBe(0)
   })
+  it('reopens standing eyes through the half-open art instead of jumping out of a narrow slit', () => {
+    const times = [-0.01, 0.02, 0.055, 0.09, 0.13, 0.16, 0.22, 0.25]
+    expect(times.map(time => blinkFrame('standing', time))).toEqual([0, 1, 4, 2, 3, 4, 1, 0])
+  })
+  it('finishes an ongoing blink across awake pose changes, without restarting or opening early', () => {
+    const clock = new PoseClock('standing', () => 0)
+    for (let i = 0; i < 25; i++) clock.advance(100)
+    expect(clock.advance(0).frame).toBe(1)
+    clock.select('reading')
+    expect(clock.advance(100).frame).toBe(2)
+    clock.select('picked_up')
+    expect(clock.advance(100).frame).toBe(1)
+    clock.select('standing')
+    expect(clock.advance(100).frame).toBe(0)
+  })
+  it('still blinks during frequent task/drag pose changes, and starts fresh after sleep', () => {
+    const clock = new PoseClock('standing', () => 0.5)
+    let blinks = 0, previous = 0
+    for (let i = 0; i < 300; i++) {
+      clock.select(i % 2 ? 'standing' : 'reading')
+      const { frame } = clock.advance(100)
+      if (frame && !previous) blinks++
+      previous = frame
+    }
+    expect(blinks).toBeGreaterThan(4)
+    clock.select('dozing')
+    for (let i = 0; i < 100; i++) expect(clock.advance(100).frame).toBe(0)
+    clock.select('standing')
+    expect(clock.advance(100).frame).toBe(0)
+  })
   it.each(POSE_IDS.filter(id => id !== 'picked_up'))('%s keeps feet planted, mostly still and bounded through two minutes', (id) => {
     const pose = poseById[id]
     const clock = new PoseClock(id, () => 0.5)
@@ -58,7 +90,7 @@ describe('current desktop pet pose contract', () => {
     }
     expect(quiet / 1200).toBeGreaterThan(0.7)
     expect(moving).toBeGreaterThan(0)
-    expect(clock.advance(100, false)).toEqual({ lean: 0, nod: 0, breath: 0, frame: 0 })
+    expect(clock.advance(100, false)).toEqual(stillPoseMotion())
   })
   it.each(['idle', 'thinking', 'writing', 'waiting_author', 'error', 'completed', 'sleeping'] as const)(
     'uses the dedicated suspension pose during a %s drag and restores the real state on release', state => {
@@ -71,7 +103,7 @@ describe('current desktop pet pose contract', () => {
     const frames = new Set<number>()
     for (let tick = 0; tick < 1200; tick++) {
       const motion = clock.advance(100)
-      expect({ ...motion, frame: 0 }).toEqual({ lean: 0, nod: 0, breath: 0, frame: 0 })
+      expect({ ...motion, frame: 0 }).toEqual(stillPoseMotion())
       expect(poseById.picked_up.files[motion.frame]).toBeTruthy()
       frames.add(motion.frame)
     }
@@ -127,9 +159,45 @@ describe('current desktop pet pose contract', () => {
     expect(() => posePlacement(poseById.standing, 0, 240, 'left', 'side', null)).toThrow()
   })
 
+  it.each(['standing', 'reading'] as const)('%s anchors pointer response to the face across bubble sides and sizes', id => {
+    const pose = poseById[id]
+    const anchor = id === 'standing' ? [192, 217] : [148.57894736842104, 235.03684210526313]
+    for (const size of [0.7, 0.8, 1.35]) for (const side of ['left', 'right'] as const) {
+      for (const bubble of ['side', 'top'] as const) {
+        const t = posePlacement(pose, 340 * size, 300 * size, side, bubble, null)
+        const x = t.x + anchor[0] * t.scaleX, y = t.y + anchor[1] * t.scaleY
+        const center = poseLookTarget(pose, t, x, y)
+        expect(center[0]).toBeCloseTo(0)
+        expect(center[1]).toBeCloseTo(0)
+        const offset = poseLookTarget(pose, t, x + 50 * t.scaleX, y - 25 * t.scaleY)
+        expect(offset[0]).toBeCloseTo(0.5)
+        expect(offset[1]).toBeCloseTo(0.25)
+      }
+    }
+  })
+
+  it.each(['left', 'right'] as const)('keeps %s compact peeking gaze screen-relative and centered on the visible face', side => {
+    const pose = poseById.peeking, layout = compactPeekLayout(272, 240, 'classic')
+    const t = posePlacement(pose, layout.width, layout.height, 'right', 'side', side, layout)
+    const x = t.x + 240.42 * t.scaleX, y = t.y + 211.16 * t.scaleY
+    const center = poseLookTarget(pose, t, x, y)
+    expect(center[0]).toBeCloseTo(0)
+    expect(center[1]).toBeCloseTo(0)
+    expect(poseLookTarget(pose, t, x + 20, y)[0]).toBeGreaterThan(0)
+    expect(poseLookTarget(pose, t, x - 20, y)[0]).toBeLessThan(0)
+  })
+
+  it('bounds distant gaze and ignores invalid or zero-size geometry', () => {
+    const pose = poseById.standing, t = posePlacement(pose, 272, 240, 'right', 'side', null)
+    expect(poseLookTarget(pose, t, 100000, -100000)).toEqual([1, 1])
+    expect(poseLookTarget(pose, t, -100000, 100000)).toEqual([-1, -1])
+    expect(poseLookTarget(pose, t, NaN, Infinity)).toEqual([0, 0])
+    expect(poseLookTarget(pose, { ...t, scaleX: 0 }, 10, 10)).toEqual([0, 0])
+  })
+
   it.each([0.7, 0.8, 1, 1.35])('compacts unused space, not the character, at scale %s', (size) => {
     const width = 340 * size, height = 300 * size
-    const layout = compactPeekLayout(width, height)
+    const layout = compactPeekLayout(width, height, 'classic')
     expect(layout.width).toBeLessThan(width * 0.8)
     expect(layout.height).toBeLessThanOrEqual(height)
     expect(layout.width * layout.height).toBeLessThan(width * height * 0.8)

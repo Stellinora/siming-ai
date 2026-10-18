@@ -5,11 +5,15 @@ import type { DesktopPetVisualState } from '../state'
 
 export const POSE_IDS = ['standing', 'reading', 'peeking', 'dozing', 'picked_up'] as const
 export type PoseId = typeof POSE_IDS[number]
+export const OUTFIT_IDS = ['classic', 'casual'] as const
+export type OutfitId = typeof OUTFIT_IDS[number]
 export type EyeRegion = [number, number, number, number, number]
 export interface Pose {
   id: PoseId
   label: string
   files: string[]
+  // Map the shared motion clock's logical blink phases to this outfit's art.
+  frameMap?: number[]
   frameMode: 'whole_sprite' | 'local_eyes'
   neckY: number
   hipY: number
@@ -18,6 +22,7 @@ export interface Pose {
   // 384x576 canvas at render time. Source PNGs remain byte-for-byte untouched.
   source?: { width: number; height: number; scale: number; x: number; y: number }
   eyeRegions?: [EyeRegion, EyeRegion]
+  eyeFeather?: number
   edge?: { boundaryX: number; visibleStripBounds: [number, number, number, number] }
 }
 export interface PoseManifest {
@@ -25,12 +30,30 @@ export interface PoseManifest {
   width: number
   height: number
   floor: number
-  poses: Pose[]
+  defaultOutfit: OutfitId
+  outfits: { id: OutfitId; label: string; poses: Pose[] }[]
   sha256: Record<string, string>
 }
 // JSON is validated (including checksums) by the mandatory pet:check build gate.
 export const manifest = rawManifest as unknown as PoseManifest
-export const poseById = Object.fromEntries(manifest.poses.map(pose => [pose.id, pose])) as Record<PoseId, Pose>
+const poseSets = Object.fromEntries(manifest.outfits.map(outfit => [outfit.id,
+  Object.fromEntries(outfit.poses.map(pose => [pose.id, pose])),
+])) as Record<OutfitId, Record<PoseId, Pose>>
+
+export function isOutfitId(value: unknown): value is OutfitId {
+  return OUTFIT_IDS.some(id => id === value)
+}
+
+export function posesFor(outfit: OutfitId): Record<PoseId, Pose> {
+  if (!isOutfitId(outfit)) throw new Error(`未知桌宠衣装：${String(outfit)}`)
+  return poseSets[outfit]
+}
+
+export function poseFrameFile(pose: Pose, frame: number): string {
+  const file = pose.files[pose.frameMap ? pose.frameMap[frame] : frame]
+  if (!Number.isInteger(frame) || frame < 0 || !file) throw new Error(`Missing pose frame: ${pose.id}/${frame}`)
+  return file
+}
 
 export function poseArtRect(pose: Pose): [number, number, number, number] {
   const source = pose.source
@@ -52,11 +75,12 @@ export function selectPose(state: DesktopPetVisualState, ambient: DesktopPetAmbi
   return { id: ambient === 'reading' ? 'reading' : 'standing', edge: null }
 }
 
-export async function loadPoseImages(signal: AbortSignal): Promise<Map<string, HTMLImageElement>> {
+export async function loadPoseImages(signal: AbortSignal, outfit: OutfitId): Promise<Map<string, HTMLImageElement>> {
   const images = new Map<string, HTMLImageElement>()
-  const dimensions = new Map(manifest.poses.flatMap(pose => pose.files.map(file =>
+  const poses = Object.values(posesFor(outfit))
+  const dimensions = new Map(poses.flatMap(pose => pose.files.map(file =>
     [file, [pose.source?.width ?? manifest.width, pose.source?.height ?? manifest.height]] as const)))
-  await Promise.all(Object.keys(manifest.sha256).map(file => new Promise<void>((resolve, reject) => {
+  await Promise.all([...dimensions.keys()].map(file => new Promise<void>((resolve, reject) => {
     const image = new Image()
     const finish = (error?: Error) => {
       image.onload = null

@@ -24,7 +24,7 @@ interface DesktopPetNativeApi {
   apply_desktop_pet_preferences?: (
     preferences: Pick<
       DesktopPetSettings,
-      'desktop_pet_scale' | 'desktop_pet_opacity' | 'desktop_pet_muted' | 'desktop_pet_on_top'
+      'desktop_pet_outfit' | 'desktop_pet_scale' | 'desktop_pet_opacity' | 'desktop_pet_muted' | 'desktop_pet_on_top'
     >,
     notifyPet: boolean,
     resizeAnchor: DesktopPetResizeAnchor | null,
@@ -141,6 +141,7 @@ export async function getDesktopPetWindowContext() {
 export async function applyDesktopPetPreferences(settings: DesktopPetSettings, notifyPet = true,
   resizeAnchor: DesktopPetResizeAnchor | null = null) {
   return nativeApi()?.apply_desktop_pet_preferences?.({
+    desktop_pet_outfit: settings.desktop_pet_outfit,
     desktop_pet_scale: settings.desktop_pet_scale,
     desktop_pet_opacity: settings.desktop_pet_opacity,
     desktop_pet_muted: settings.desktop_pet_muted,

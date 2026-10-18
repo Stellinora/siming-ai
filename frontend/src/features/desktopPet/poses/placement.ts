@@ -1,5 +1,5 @@
 import type { DesktopPetBubblePlacement, DesktopPetSide } from '../behavior'
-import { manifest, poseById, type Pose } from './contract'
+import { manifest, posesFor, type OutfitId, type Pose } from './contract'
 
 export const PEEK_BUBBLE_MAX_HEIGHT = 88
 
@@ -13,8 +13,21 @@ export interface PeekLayout {
   bubbleInset: number
 }
 
-export function compactPeekLayout(width: number, height: number): PeekLayout {
-  const pose = poseById.peeking
+// Keep the entry viewport until both native restoration and a measured canvas
+// resize have completed. A native bridge reply alone is not a painted resize.
+export interface PeekViewport extends PeekLayout {
+  side: DesktopPetSide
+  scale: number
+  nativeRestored: boolean
+}
+
+export function normalPeekViewport(layout: PeekViewport, scale: number) {
+  const ratio = scale / layout.scale
+  return { width: layout.normalWidth * ratio, height: layout.normalHeight * ratio }
+}
+
+export function compactPeekLayout(width: number, height: number, outfit: OutfitId): PeekLayout {
+  const pose = posesFor(outfit).peeking
   const full = posePlacement(pose, width, height, 'right', 'side', 'left')
   // Include the hair tips and the maximum subtle lean, not just the face.
   const strip = pose.edge!.visibleStripBounds
@@ -57,4 +70,19 @@ export function posePlacement(pose: Pose, width: number, height: number,
   const center = topBubble ? width / 2 : width * (bubbleSide === 'right' ? 0.25 : 0.75)
   return { x: center - manifest.width / 2 * scale,
     y: height * 0.94 - manifest.floor * scale, scaleX: scale, scaleY: scale }
+}
+
+// Pointer coordinates are local CSS pixels, not fractions of the transparent
+// window. Anchor to the eyes so bubble side, scale and compact edge placement
+// cannot bias a pointer resting over the face. Keep the result screen-relative;
+// PoseReaction handles the mirrored mesh exactly once.
+export function poseLookTarget(pose: Pose, placement: ReturnType<typeof posePlacement>, x: number, y: number): [number, number] {
+  if (![x, y, placement.x, placement.y, placement.scaleX, placement.scaleY].every(Number.isFinite)
+    || !placement.scaleX || placement.scaleY <= 0) return [0, 0]
+  const eyes = pose.eyeRegions
+  const anchorX = eyes ? (eyes[0][0] + eyes[1][0]) / 2 : manifest.width / 2
+  const anchorY = eyes ? (eyes[0][1] + eyes[1][1]) / 2 : pose.neckY - 50
+  const clamp = (value: number) => Math.max(-1, Math.min(1, value))
+  return [clamp((x - placement.x - anchorX * placement.scaleX) / (100 * Math.abs(placement.scaleX))),
+    clamp((placement.y + anchorY * placement.scaleY - y) / (100 * placement.scaleY))]
 }
