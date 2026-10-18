@@ -46,7 +46,7 @@ export function alphaHitRects(pixels: Uint8ClampedArray, width: number, height: 
 
 export function imageHitRegion(image: HTMLImageElement, width: number, height: number,
   transform: { x: number; y: number; scaleX: number; scaleY: number },
-  artRect: HitRect): PetHitRegion {
+  artRect: HitRect, padding = 6): PetHitRegion {
   const mask = document.createElement('canvas')
   mask.width = Math.ceil(width); mask.height = Math.ceil(height)
   const ctx = mask.getContext('2d', { willReadFrequently: true })
@@ -54,6 +54,6 @@ export function imageHitRegion(image: HTMLImageElement, width: number, height: n
   ctx.setTransform(transform.scaleX, 0, 0, transform.scaleY, transform.x, transform.y)
   ctx.drawImage(image, ...artRect)
   const pixels = ctx.getImageData(0, 0, mask.width, mask.height)
-  return { width, height, rects: alphaHitRects(pixels.data, mask.width, mask.height)
+  return { width, height, rects: alphaHitRects(pixels.data, mask.width, mask.height, padding)
     .map(rect => clipHitRect(rect, width, height)).filter((rect): rect is HitRect => Boolean(rect)) }
 }

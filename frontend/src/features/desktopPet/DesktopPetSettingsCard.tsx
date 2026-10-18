@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Card, Col, Row, Slider, Space, Switch, Typography, message } from 'antd'
+import { Alert, Button, Card, Col, Row, Select, Slider, Space, Switch, Typography, message } from 'antd'
 import { EyeInvisibleOutlined, EyeOutlined, SaveOutlined } from '@ant-design/icons'
 import { apiClient } from '../../shared/api/client'
 import type { ApiEnvelope } from '../../shared/api/contracts'
@@ -10,6 +10,7 @@ import {
   showDesktopPet,
 } from './nativeBridge'
 import type { DesktopPetSettings, DesktopPetSettingsPatch } from './types'
+import { isOutfitId, manifest } from './poses/contract'
 
 const { Paragraph, Text } = Typography
 
@@ -21,6 +22,7 @@ interface DesktopPetSettingsCardProps {
 
 function editableSettings(settings: DesktopPetSettings): Required<DesktopPetSettingsPatch> {
   return {
+    desktop_pet_outfit: settings.desktop_pet_outfit,
     desktop_pet_enabled: settings.desktop_pet_enabled,
     desktop_pet_scale: settings.desktop_pet_scale,
     desktop_pet_opacity: settings.desktop_pet_opacity,
@@ -106,6 +108,17 @@ export default function DesktopPetSettingsCard({
         )}
 
         <Row gutter={[24, 18]} align="middle">
+          <Col xs={24} md={12}>
+            <Space direction="vertical" size={4}>
+              <Text strong>衣装</Text>
+              <Text type="secondary">两套衣装共用抱书、读书、打盹、探头和被拎起动作。</Text>
+            </Space>
+          </Col>
+          <Col xs={24} md={12}>
+            <Select aria-label="桌宠衣装" value={draft.desktop_pet_outfit} style={{ minWidth: 150 }}
+              options={manifest.outfits.map(outfit => ({ value: outfit.id, label: outfit.label }))}
+              onChange={value => { if (isOutfitId(value)) updateDraft('desktop_pet_outfit', value) }} />
+          </Col>
           <Col xs={24} md={12}>
             <Space direction="vertical" size={4}>
               <Text strong>随司命启动桌宠</Text>

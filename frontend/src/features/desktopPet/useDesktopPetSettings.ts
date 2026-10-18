@@ -9,6 +9,7 @@ import type { DesktopPetResizeAnchor } from './behavior'
 const SETTINGS_QUERY_KEY = ['launcher-settings', 'desktop-pet'] as const
 export const PET_PREFERENCE_PREVIEW_MS = 16
 const signature = (settings: DesktopPetSettings) => JSON.stringify([
+  settings.desktop_pet_outfit,
   settings.desktop_pet_scale, settings.desktop_pet_opacity,
   settings.desktop_pet_muted, settings.desktop_pet_on_top,
 ])

@@ -7732,6 +7732,8 @@ export interface components {
             desktop_pet_on_top?: boolean | null;
             /** Desktop Pet Opacity */
             desktop_pet_opacity?: number | null;
+            /** Desktop Pet Outfit */
+            desktop_pet_outfit?: ("classic" | "casual") | null;
             /** Desktop Pet Scale */
             desktop_pet_scale?: number | null;
             /** Gateway Advertised Url */

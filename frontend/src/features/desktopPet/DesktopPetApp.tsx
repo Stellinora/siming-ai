@@ -27,21 +27,20 @@ import {
   type DesktopPetWindowContext,
 } from './behavior'
 import {
-  beginDesktopPetDrag,
   cancelDesktopPetEdgeMove,
-  endDesktopPetDrag,
   getDesktopPetWindowContext,
   hideDesktopPet,
-  moveDesktopPetDrag,
   moveDesktopPetToEdge,
   showMainWindow,
 } from './nativeBridge'
+import { NativePetDragController, type NativePetDragSession } from './nativeDrag'
 import {
   PoseCanvas,
   type PoseCanvasHandle,
   type PetLoadStatus,
 } from './poses/PoseCanvas'
-import { compactPeekLayout, PEEK_BUBBLE_MAX_HEIGHT, type PeekLayout } from './poses/placement'
+import { compactPeekLayout, normalPeekViewport, PEEK_BUBBLE_MAX_HEIGHT, type PeekViewport } from './poses/placement'
+import { isOutfitId, manifest } from './poses/contract'
 import { useDesktopPetHitRegion } from './useDesktopPetHitRegion'
 import { PET_SPEECH_FADE_MS, useDesktopPetSpeech } from './useDesktopPetSpeech'
 import { useDesktopPetSettings } from './useDesktopPetSettings'
@@ -58,7 +57,20 @@ interface DesktopPetDragSession {
   latestScreenY: number
   moved: boolean
   moveFrame: number | null
-  nativeQueue: Promise<boolean>
+  target: HTMLButtonElement
+  native: NativePetDragSession
+}
+
+function releaseDragCapture(session: DesktopPetDragSession) {
+  if (session.moveFrame !== null) {
+    window.cancelAnimationFrame(session.moveFrame)
+    session.moveFrame = null
+  }
+  try {
+    session.target.releasePointerCapture(session.pointerId)
+  } catch {
+    // WebView2 may have already lost DOM capture when the native window moved.
+  }
 }
 
 type DesktopPetChatterKey = DesktopPetVisualState | 'paused' | 'peeking' | 'reading'
@@ -260,7 +272,7 @@ export default function DesktopPetApp() {
   const [bubbleSide, setBubbleSide] = useState<DesktopPetSide>('right')
   const [bubblePlacement, setBubblePlacement] = useState<DesktopPetBubblePlacement>('side')
   const [isDragging, setIsDragging] = useState(false)
-  const [peekLayout, setPeekLayout] = useState<PeekLayout | null>(null)
+  const [peekLayout, setPeekLayout] = useState<PeekViewport | null>(null)
   const pendingRestore = useRef<Promise<boolean>>(Promise.resolve(true))
   const windowContext = useRef<DesktopPetWindowContext | null>(null)
   const rootRef = useRef<HTMLElement>(null)
@@ -270,6 +282,7 @@ export default function DesktopPetApp() {
   )
   const [notice, setNotice] = useState('')
   const { settings, saving, previewSettings, persistSettings } = useDesktopPetSettings(setNotice)
+  const previousOutfit = useRef(settings.desktop_pet_outfit)
   const mutedRef = useRef(settings.desktop_pet_muted)
   mutedRef.current = settings.desktop_pet_muted
   const [chatterIndex, setChatterIndex] = useState(-1)
@@ -278,6 +291,7 @@ export default function DesktopPetApp() {
   const updateCharacterRegion = useDesktopPetHitRegion(rootRef, setNotice)
   const [petStatus, setPetStatus] = useState<PetLoadStatus>('loading')
   const dragSession = useRef<DesktopPetDragSession | null>(null)
+  const [nativeDrag] = useState(() => new NativePetDragController())
   const petRef = useRef<PoseCanvasHandle | null>(null)
   // Closing the action menu exposes the button under the pointer. This is not
   // a new hover gesture: keep manual sleep until the pointer leaves or clicks.
@@ -357,15 +371,31 @@ export default function DesktopPetApp() {
   const wakePet = useCallback(() => {
     manualSleepHoverGuard.current = false
     const request = ++edgeRequest.current
+    setPeekLayout(current => current && { ...current, nativeRestored: false })
     pendingRestore.current = cancelDesktopPetEdgeMove().catch(() => false)
-    void pendingRestore.current.then(() => {
-      if (request === edgeRequest.current) setPeekLayout(null)
+    void pendingRestore.current.then(restored => {
+      if (request !== edgeRequest.current) return
+      if (restored) setPeekLayout(current => current && { ...current, nativeRestored: true })
+      else if (peekLayout) setNotice('窗口还没恢复好，轻点我再试一次～')
     })
     const now = Date.now()
     setClock(now)
     setIdleTracker({ activityKey, idleSince: now })
     setAmbientMode('awake')
-  }, [activityKey])
+  }, [activityKey, peekLayout])
+
+  const acknowledgePeekRestore = useCallback((restored: PeekViewport) => {
+    // A late frame from the previous exit cannot clear a new docking request.
+    setPeekLayout(current => current === restored ? null : current)
+  }, [])
+
+  useEffect(() => {
+    if (previousOutfit.current === settings.desktop_pet_outfit) return
+    previousOutfit.current = settings.desktop_pet_outfit
+    // A different outline must not inherit the old outfit's compact window.
+    // Normal reading/sleep and real operations are otherwise unchanged.
+    if (desktopPetPeekSide(ambientMode) || ambientMode === 'going-left' || ambientMode === 'going-right') wakePet()
+  }, [ambientMode, settings.desktop_pet_outfit, wakePet])
 
   useEffect(() => {
     if (idleTracker.activityKey !== activityKey) wakePet()
@@ -377,7 +407,9 @@ export default function DesktopPetApp() {
   }, [])
 
   const refreshWindowPlacement = useCallback(async () => {
+    const request = edgeRequest.current
     const context: DesktopPetWindowContext = await getDesktopPetWindowContext()
+    if (request !== edgeRequest.current) return context
     windowContext.current = context
     setBubbleSide(desktopPetBubbleSide(context))
     setBubblePlacement(context.compact ? 'side' : desktopPetBubblePlacement(context))
@@ -389,10 +421,17 @@ export default function DesktopPetApp() {
     setAmbientMode(`going-${side}`)
     setMenuOpen(false)
     try {
-      await pendingRestore.current
+      if (!await pendingRestore.current) throw new Error('窗口还没恢复好，轻点我再试一次～')
       if (request !== edgeRequest.current) return
       const viewport = rootRef.current?.getBoundingClientRect()
-      const layout = compactPeekLayout(viewport?.width || window.innerWidth, viewport?.height || window.innerHeight)
+      // The bridge can finish before WebView2 has delivered its resize. A new
+      // dock must use the original viewport, never compact an already small one.
+      const normal = peekLayout && normalPeekViewport(peekLayout, settings.desktop_pet_scale)
+      const layout: PeekViewport = {
+        ...compactPeekLayout(normal?.width ?? (viewport?.width || window.innerWidth),
+          normal?.height ?? (viewport?.height || window.innerHeight), settings.desktop_pet_outfit),
+        side, scale: settings.desktop_pet_scale, nativeRestored: false,
+      }
       setPeekLayout(layout)
       const context = await moveDesktopPetToEdge(side, layout)
       if (request !== edgeRequest.current) return
@@ -406,12 +445,10 @@ export default function DesktopPetApp() {
       setAmbientMode(`peek-${side}`)
     } catch (error) {
       if (request !== edgeRequest.current) return
-      setPeekLayout(null)
-      setAmbientMode('awake')
-      setIdleTracker({ activityKey, idleSince: Date.now() })
+      wakePet()
       setNotice(error instanceof Error ? error.message : '贴边暂时不可用')
     }
-  }, [activityKey])
+  }, [peekLayout, settings.desktop_pet_outfit, settings.desktop_pet_scale, wakePet])
 
   useEffect(() => {
     const refresh = () => { void refreshWindowPlacement() }
@@ -478,32 +515,14 @@ export default function DesktopPetApp() {
     startPeek,
   ])
 
-  const queueNativeDragMove = (
-    session: DesktopPetDragSession,
-    screenX: number,
-    screenY: number,
-  ) => {
-    session.nativeQueue = session.nativeQueue.then(async (started) => {
-      if (!started) return false
-      await moveDesktopPetDrag(screenX, screenY)
-      return true
-    }, () => false)
-  }
-
   const scheduleNativeDragMove = (session: DesktopPetDragSession) => {
     if (session.moveFrame !== null) return
     session.moveFrame = window.requestAnimationFrame(() => {
       session.moveFrame = null
       if (dragSession.current !== session || !session.moved) return
-      queueNativeDragMove(session, session.latestScreenX, session.latestScreenY)
+      session.native.move(session.latestScreenX, session.latestScreenY)
     })
   }
-
-  const closeNativeDrag = (session: DesktopPetDragSession) => (
-    session.nativeQueue
-      .then((started) => (started ? endDesktopPetDrag() : false))
-      .catch(() => false)
-  )
 
   const onCharacterPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0 || dragSession.current) return
@@ -517,9 +536,11 @@ export default function DesktopPetApp() {
       latestScreenY: event.screenY,
       moved: false,
       moveFrame: null,
-      nativeQueue: beginDesktopPetDrag(event.screenX, event.screenY).catch(() => false),
+      target: event.currentTarget,
+      native: nativeDrag.begin(event.screenX, event.screenY),
     }
     dragSession.current = session
+    petRef.current?.dragAt(event.screenX)
     try {
       event.currentTarget.setPointerCapture(event.pointerId)
     } catch {
@@ -528,68 +549,66 @@ export default function DesktopPetApp() {
   }
 
   const finishCharacterPointer = (
-    event: React.PointerEvent<HTMLButtonElement>,
+    event: Pick<PointerEvent, 'pointerId' | 'screenX' | 'screenY'>,
     cancelled: boolean,
   ) => {
     const session = dragSession.current
     if (!session || session.pointerId !== event.pointerId) return
-    const distance = Math.hypot(
-      event.screenX - session.startScreenX,
-      event.screenY - session.startScreenY,
-    )
-    session.moved = session.moved || distance > DRAG_THRESHOLD_PX
-    session.latestScreenX = event.screenX
-    session.latestScreenY = event.screenY
-    dragSession.current = null
-    if (session.moveFrame !== null) {
-      window.cancelAnimationFrame(session.moveFrame)
-      session.moveFrame = null
+    if (!cancelled) {
+      const distance = Math.hypot(
+        event.screenX - session.startScreenX,
+        event.screenY - session.startScreenY,
+      )
+      session.moved = session.moved || distance > DRAG_THRESHOLD_PX
+      session.latestScreenX = event.screenX
+      session.latestScreenY = event.screenY
     }
-    if (session.moved) {
-      queueNativeDragMove(session, session.latestScreenX, session.latestScreenY)
+    dragSession.current = null
+    petRef.current?.dragAt(null)
+    if (cancelled) petRef.current?.resetLook()
+    releaseDragCapture(session)
+    if (session.moved && !cancelled) {
+      session.native.move(session.latestScreenX, session.latestScreenY)
     }
     wakePet()
     setIsDragging(false)
-    const nativeDragClosed = closeNativeDrag(session)
+    const nativeDragClosed = cancelled ? session.native.cancel() : session.native.finish()
     const releaseRequest = edgeRequest.current
-    try {
-      event.currentTarget.releasePointerCapture(event.pointerId)
-    } catch {
-      // Pointer capture is best-effort in the embedded browser.
-    }
     if (!cancelled && !session.moved) {
       petRef.current?.tap()
       if (!mutedRef.current) playPetSound('tap')
       setChatterIndex((current) => (current + 1) % chatterLines.length)
       speech.reveal()
       setMenuOpen(false)
-    } else if (session.moved) {
+    } else if (session.moved && !cancelled) {
       void nativeDragClosed.then(async (closed) => {
+        if (!closed || dragSession.current || releaseRequest !== edgeRequest.current) return
         const context = await refreshWindowPlacement()
-        if (!closed || cancelled || dragSession.current || releaseRequest !== edgeRequest.current) return
+        if (dragSession.current || releaseRequest !== edgeRequest.current) return
         const side = desktopPetEdgeSide(context)
         if (side) await startPeek(side)
       })
     }
   }
 
-  const onCharacterPointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
-    finishCharacterPointer(event, false)
-  }
-
-  const onCharacterPointerCancel = (event: React.PointerEvent<HTMLButtonElement>) => {
-    finishCharacterPointer(event, true)
-    petRef.current?.resetLook()
+  const cancelCharacterDrag = () => {
+    const session = dragSession.current
+    if (session) finishCharacterPointer({
+      pointerId: session.pointerId, screenX: session.latestScreenX, screenY: session.latestScreenY,
+    }, true)
+    else petRef.current?.resetLook()
   }
 
   const onCharacterPointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (dragSession.current) return
     if (presentation.state === 'sleeping' && !manualSleepHoverGuard.current) wakePet()
-    const bounds = event.currentTarget.getBoundingClientRect()
-    const x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1
-    const y = 1 - ((event.clientY - bounds.top) / bounds.height) * 2
-    petRef.current?.lookAt(x, y)
+    petRef.current?.lookAt(event.clientX, event.clientY)
+  }
+
+  const moveCharacterDrag = (event: PointerEvent) => {
     const session = dragSession.current
-    if (!session || session.pointerId !== event.pointerId) return
+    if (!session || session.pointerId !== event.pointerId || !(event.buttons & 1)) return
+    petRef.current?.lookAt(event.clientX, event.clientY)
     session.latestScreenX = event.screenX
     session.latestScreenY = event.screenY
     const distance = Math.hypot(
@@ -605,9 +624,43 @@ export default function DesktopPetApp() {
     }
     if (session.moved) {
       event.preventDefault()
+      petRef.current?.dragAt(event.screenX)
       scheduleNativeDragMove(session)
     }
   }
+
+  const dragHandlers = useRef({ move: moveCharacterDrag, finish: finishCharacterPointer, cancel: cancelCharacterDrag })
+  dragHandlers.current = { move: moveCharacterDrag, finish: finishCharacterPointer, cancel: cancelCharacterDrag }
+  useEffect(() => {
+    // Native SetBounds can drop DOM capture. WinForms continues forwarding OS
+    // events, so the active gesture must accept moves/releases anywhere here.
+    const move = (event: PointerEvent) => dragHandlers.current.move(event)
+    const finish = (event: PointerEvent) => {
+      if (event.type === 'pointerup' && event.button !== 0) return
+      dragHandlers.current.finish(event, event.type === 'pointercancel')
+    }
+    const cancel = () => {
+      dragHandlers.current.cancel()
+      nativeDrag.cancelAll()
+    }
+    const visibility = () => { if (document.hidden) cancel() }
+    window.addEventListener('pointermove', move, true)
+    window.addEventListener('pointerup', finish, true)
+    window.addEventListener('pointercancel', finish, true)
+    window.addEventListener('blur', cancel)
+    document.addEventListener('visibilitychange', visibility)
+    return () => {
+      window.removeEventListener('pointermove', move, true)
+      window.removeEventListener('pointerup', finish, true)
+      window.removeEventListener('pointercancel', finish, true)
+      window.removeEventListener('blur', cancel)
+      document.removeEventListener('visibilitychange', visibility)
+      const session = dragSession.current
+      dragSession.current = null
+      if (session) releaseDragCapture(session)
+      nativeDrag.cancelAll()
+    }
+  }, [nativeDrag])
 
   const stateClass = `desktop-pet--${presentation.state}`
   const peekSide = desktopPetPeekSide(ambientMode)
@@ -651,11 +704,13 @@ export default function DesktopPetApp() {
       style={rootStyle}
       onContextMenu={(event) => {
         event.preventDefault()
-        wakePet()
-        setMenuOpen(true)
+        if (!menuOpen) wakePet()
+        setMenuOpen((open) => !open)
       }}
       onPointerDown={(event) => {
-        if (event.target === event.currentTarget) {
+        // Right-click is handled once by contextmenu; dismissing it here first
+        // would make the same gesture immediately reopen the menu.
+        if (event.button === 0 && !(event.target as Element).closest('.desktop-pet__menu')) {
           setMenuOpen(false)
         }
       }}
@@ -671,14 +726,12 @@ export default function DesktopPetApp() {
       <button
         type="button"
         className="desktop-pet__character"
-        aria-label={`${presentation.title}。单击换一句悄悄话，显示 5 秒后消失，拖动可移动桌宠，双击打开书斋。`}
+        aria-label={`${presentation.title}。单击换一句悄悄话，显示 5 秒后消失，拖动可移动桌宠，双击打开书斋，右键打开或收起菜单。`}
         onPointerDown={onCharacterPointerDown}
         onPointerEnter={() => {
           if (presentation.state === 'sleeping' && !manualSleepHoverGuard.current) wakePet()
         }}
         onPointerMove={onCharacterPointerMove}
-        onPointerUp={onCharacterPointerUp}
-        onPointerCancel={onCharacterPointerCancel}
         onPointerLeave={() => { manualSleepHoverGuard.current = false; petRef.current?.resetLook() }}
         onKeyDown={(event) => {
           if (event.key !== 'Enter' && event.key !== ' ') return
@@ -692,12 +745,15 @@ export default function DesktopPetApp() {
       >
         <PoseCanvas
           ref={petRef}
+          outfit={settings.desktop_pet_outfit}
+          scale={settings.desktop_pet_scale}
           state={presentation.state}
           ambient={ambientMode}
           bubbleSide={bubbleSide}
           bubblePlacement={bubblePlacement}
           dragging={isDragging}
           peekLayout={peekLayout}
+          onPeekRestored={acknowledgePeekRestore}
           onHitRegionChange={updateCharacterRegion}
           onStatusChange={setPetStatus}
         />
@@ -724,8 +780,18 @@ export default function DesktopPetApp() {
 
       {menuOpen && (
         <section className="desktop-pet__menu" aria-label="桌宠菜单">
-          <header><strong>司命桌宠</strong><span>{saving ? '保存中…' : '右键菜单'}</span></header>
+          <header><strong>司命桌宠</strong><span>{saving ? '保存中…' : '再右键收起'}</span></header>
           <p className="desktop-pet__menu-help">轻点说一句，5 秒后收起<br />拖动陪你走 · 双击回书斋</p>
+          <label>
+            <span>衣装</span>
+            <select aria-label="桌宠衣装" value={settings.desktop_pet_outfit}
+              onChange={event => {
+                const outfit = event.target.value
+                if (isOutfitId(outfit)) void persistSettings({ desktop_pet_outfit: outfit })
+              }}>
+              {manifest.outfits.map(outfit => <option key={outfit.id} value={outfit.id}>{outfit.label}</option>)}
+            </select>
+          </label>
           <label>
             <span>小动作</span>
             <select aria-label="桌宠小动作" value={ambientMode}

@@ -34,6 +34,31 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); delete window.pywebview })
 
 describe('desktop pet size preview and persistence', () => {
+  it('serializes quick outfit switches without reverting the latest choice on an older save', async () => {
+    const first = deferred<{ data: { data: typeof defaults } }>()
+    mocks.put.mockReturnValueOnce(first.promise)
+    const { result } = mountSettings()
+    await advance(0)
+    act(() => { void result.current.persistSettings({ desktop_pet_outfit: 'casual' }) })
+    await advance()
+    expect(mocks.apply).toHaveBeenLastCalledWith(expect.objectContaining({ desktop_pet_outfit: 'casual' }), false, null)
+    act(() => { void result.current.persistSettings({ desktop_pet_outfit: 'classic' }) })
+    await act(async () => first.resolve({ data: { data: { ...defaults, desktop_pet_outfit: 'casual' } } }))
+    await advance()
+    expect(mocks.put.mock.calls.map(call => call[1])).toEqual([{ desktop_pet_outfit: 'casual' }, { desktop_pet_outfit: 'classic' }])
+    expect(result.current.settings.desktop_pet_outfit).toBe('classic')
+    expect(mocks.apply).toHaveBeenLastCalledWith(expect.objectContaining({ desktop_pet_outfit: 'classic' }), false, null)
+  })
+  it('rolls back failed outfit persistence visibly and accepts main-window wardrobe changes', async () => {
+    const { result, error } = mountSettings()
+    await advance(0)
+    act(() => window.dispatchEvent(new CustomEvent('siming:desktop-pet-preferences', { detail: { desktop_pet_outfit: 'casual' } })))
+    expect(result.current.settings.desktop_pet_outfit).toBe('casual')
+    mocks.put.mockRejectedValueOnce(new Error('Outfit save failed'))
+    await act(async () => { await result.current.persistSettings({ desktop_pet_outfit: 'classic' }) })
+    expect(result.current.settings.desktop_pet_outfit).toBe('casual')
+    expect(error).toHaveBeenLastCalledWith('Outfit save failed')
+  })
   it('previews immediately without saving and coalesces a burst to the latest size', async () => {
     const { result } = mountSettings()
     await advance(0)

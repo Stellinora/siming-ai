@@ -141,8 +141,11 @@ def test_windows_packaging_requires_verified_current_desktop_pet_assets():
     assert script.index('Invoke-Native $NpmExe @("run", "pet:check")') < script.index(
         'Invoke-Native $NpmExe @("run", "build")'
     )
-    assert {pose["id"] for pose in manifest["poses"]} == {"standing", "reading", "peeking", "dozing", "picked_up"}
-    assert len(manifest["sha256"]) == 15
+    assert manifest["defaultOutfit"] == "classic"
+    assert [outfit["id"] for outfit in manifest["outfits"]] == ["classic", "casual"]
+    for outfit in manifest["outfits"]:
+        assert {pose["id"] for pose in outfit["poses"]} == {"standing", "reading", "peeking", "dozing", "picked_up"}
+    assert len(manifest["sha256"]) == 28
     assert "createHash('sha256')" in checker
     assert "Only the current pose runtime may ship" in checker
     assert not (ROOT / "frontend/public/desktop-pet/live2d").exists()
